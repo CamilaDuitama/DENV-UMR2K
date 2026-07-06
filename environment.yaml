@@ -1,0 +1,25 @@
+name: denv-umr2k
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - biopython>=1.83
+  - pandas>=2.2
+  - requests>=2.31
+  - tqdm
+  - pyyaml
+  - openpyxl          # Excel metadata export
+  - seaborn           # plots for QC
+  - matplotlib
+  - jupyter
+  - ipykernel
+  # Sequence handling
+  - mafft             # multiple alignment
+  - fasttree          # quick tree for QC
+  # Web / GitHub Pages
+  - jinja2            # template rendering for the static site
+  - pip:
+    - nextstrain-cli  # optional: pull nextstrain builds

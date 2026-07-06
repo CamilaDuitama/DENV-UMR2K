@@ -1,0 +1,13 @@
+.snakemake/
+__pycache__/
+*.pyc
+*.egg-info/
+.ipynb_checkpoints/
+data/raw/
+data/processed/
+logs/
+*.log
+*.out
+*.err
+slurm-*.out
+.DS_Store
