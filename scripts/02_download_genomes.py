@@ -1,38 +1,45 @@
 #!/usr/bin/env python3
 """
 02_download_genomes.py
-Download ALL DENV complete genomes from NCBI, filter by host and length,
-deduplicate, and produce a clean FASTA + metadata TSV ready for analysis.
+Download DENV full genomes prioritising Nextstrain (curated, clade-annotated),
+then supplement with NCBI GenBank sequences not already captured.
+
+Strategy
+--------
+1. Nextstrain  — download sequences_denv{1-4}.fasta.zst + use metadata TSVs
+                  from 01_query_availability.py (already downloaded to data/raw/)
+2. NCBI        — download ALL dengue (taxid 12637, no --complete-only),
+                  subtract Nextstrain accessions, keep remaining ≥10 kb
+3. Merge       — cat Nextstrain + NCBI complement → length filter → dedup
 
 Requires:
   module load ncbi-datasets/v2
-  conda activate ./env   (pandas, biopython, zstandard)
-  seqkit on PATH         (from conda env)
+  module load SeqKit/2.8.2
+  conda activate ./env   (pandas, requests, zstandard)
 
 Output (data/processed/):
-  denv_all_raw.fasta              -- all downloaded sequences (unfiltered)
-  denv_all_metadata.tsv           -- parsed metadata from data_report.jsonl
-  denv_filtered.fasta             -- length + host filtered + deduped
-  denv_filtered_metadata.tsv      -- metadata for retained sequences
-
-Usage:
-  python scripts/02_download_genomes.py [--outdir data/processed]
-                                        [--min-len 10000] [--max-len 12000]
-                                        [--hosts human mosquito]
-                                        [--keep-zip]
+  nextstrain_seqs_full.fasta          -- Nextstrain sequences ≥10 kb
+  nextstrain_metadata_full.tsv        -- corresponding metadata
+  ncbi_complement.fasta               -- NCBI sequences ≥10 kb not in Nextstrain
+  ncbi_complement_metadata.tsv        -- corresponding metadata
+  denv_final.fasta                    -- merged, deduped full-genome dataset
+  denv_final_metadata.tsv             -- merged metadata
 """
 
 import argparse
+import io
 import json
 import logging
 import os
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 from pathlib import Path
 
 import pandas as pd
+import requests
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -43,20 +50,23 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-DENV_TAXID   = "12637"   # Dengue virus species (all 4 serotypes)
-MIN_LEN_DEFAULT = 10_000
-MAX_LEN_DEFAULT = 12_000
+DENV_TAXID = "12637"
+MIN_LEN = 10_000
+MAX_LEN = 12_000
 
-# Serotype name patterns — handles Arabic and Roman numerals (both appear in NCBI)
+NEXTSTRAIN_BASE = "https://data.nextstrain.org/files/workflows/dengue"
+NEXTSTRAIN_SEQS = {
+    "DENV1": f"{NEXTSTRAIN_BASE}/sequences_denv1.fasta.zst",
+    "DENV2": f"{NEXTSTRAIN_BASE}/sequences_denv2.fasta.zst",
+    "DENV3": f"{NEXTSTRAIN_BASE}/sequences_denv3.fasta.zst",
+    "DENV4": f"{NEXTSTRAIN_BASE}/sequences_denv4.fasta.zst",
+}
+
 SEROTYPE_MAP = {
-    "dengue virus type 1": "DENV1", "dengue virus type i": "DENV1",
-    "dengue virus 1": "DENV1",
-    "dengue virus type 2": "DENV2", "dengue virus type ii": "DENV2",
-    "dengue virus 2": "DENV2",
-    "dengue virus type 3": "DENV3", "dengue virus type iii": "DENV3",
-    "dengue virus 3": "DENV3",
-    "dengue virus type 4": "DENV4", "dengue virus type iv": "DENV4",
-    "dengue virus 4": "DENV4",
+    "dengue virus type 1": "DENV1", "dengue virus type i":   "DENV1", "dengue virus 1": "DENV1",
+    "dengue virus type 2": "DENV2", "dengue virus type ii":  "DENV2", "dengue virus 2": "DENV2",
+    "dengue virus type 3": "DENV3", "dengue virus type iii": "DENV3", "dengue virus 3": "DENV3",
+    "dengue virus type 4": "DENV4", "dengue virus type iv":  "DENV4", "dengue virus 4": "DENV4",
 }
 
 
@@ -67,107 +77,198 @@ def check_dependencies():
     if not shutil.which("datasets"):
         missing.append("datasets  →  module load ncbi-datasets/v2")
     if not shutil.which("seqkit"):
-        missing.append("seqkit    →  conda activate ./env")
+        missing.append("seqkit    →  module load SeqKit/2.8.2")
     if missing:
-        log.error("Missing dependencies:\n  " + "\n  ".join(missing))
+        log.error("Missing:\n  " + "\n  ".join(missing))
         sys.exit(1)
-    log.info("datasets: %s", shutil.which("datasets"))
-    log.info("seqkit:   %s", shutil.which("seqkit"))
-
-
-def assign_serotype(organism_name: str) -> str:
-    name = organism_name.lower()
-    for pattern, label in SEROTYPE_MAP.items():
-        if pattern in name:
-            return label
-    for digit, label in [("1","DENV1"),("2","DENV2"),("3","DENV3"),("4","DENV4")]:
-        if f"type {digit}" in name or f"denv{digit}" in name:
-            return label
-    return "unknown"
-
-
-def assign_host_category(host_name: str) -> str:
-    name = host_name.lower()
-    if "homo sapiens" in name or "human" in name:
-        return "human"
-    if "aedes" in name or "culex" in name or "mosquito" in name or "stegomyia" in name:
-        return "mosquito"
-    return "other" if name else "unknown"
 
 
 def run(cmd: list[str], desc: str) -> subprocess.CompletedProcess:
     log.info("[%s] %s", desc, " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        log.error("[%s] FAILED:\n%s", desc, result.stderr.strip())
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        log.error("[%s] FAILED:\n%s", desc, r.stderr.strip())
         sys.exit(1)
-    return result
+    return r
 
 
-# ── Phase 1: Download ─────────────────────────────────────────────────────────
+def count_seqs(fasta: Path) -> int:
+    r = subprocess.run(["seqkit", "stats", "-T", str(fasta)], capture_output=True, text=True)
+    lines = r.stdout.strip().splitlines()
+    if len(lines) > 1:
+        return int(lines[1].split("\t")[3])
+    return 0
 
-def download_ncbi(outdir: Path, keep_zip: bool) -> Path:
+
+def assign_serotype(name: str) -> str:
+    n = name.lower()
+    for pat, lab in SEROTYPE_MAP.items():
+        if pat in n:
+            return lab
+    return "unknown"
+
+
+def assign_host_category(host: str) -> str:
+    h = host.lower()
+    if "homo sapiens" in h or "human" in h:
+        return "human"
+    if "aedes" in h or "culex" in h or "mosquito" in h or "stegomyia" in h:
+        return "mosquito"
+    return "other" if h else "unknown"
+
+
+def download_zst_fasta(url: str, out_fasta: Path, label: str) -> bool:
+    """Stream-decompress a .fasta.zst URL directly to a FASTA file."""
+    try:
+        import zstandard as zstd
+    except ImportError:
+        log.error("zstandard not installed. conda activate ./env")
+        return False
+
+    log.info("Downloading %s …", label)
+    for attempt in range(1, 4):
+        try:
+            with requests.get(url, stream=True, timeout=300) as r:
+                r.raise_for_status()
+                dctx = zstd.ZstdDecompressor()
+                with dctx.stream_reader(r.raw) as reader, open(out_fasta, "wb") as fh:
+                    shutil.copyfileobj(reader, fh)
+            log.info("  %s → %s", label, out_fasta)
+            return True
+        except Exception as e:
+            log.warning("  Attempt %d/3 failed: %s", attempt, e)
+            time.sleep(2 ** attempt)
+    log.error("All retries failed for %s", label)
+    return False
+
+
+# ── Phase 1: Nextstrain sequences ─────────────────────────────────────────────
+
+def download_nextstrain_seqs(raw_dir: Path, proc_dir: Path) -> tuple[Path, pd.DataFrame]:
     """
-    Download all complete DENV genomes using datasets download.
-    Returns path to unzipped ncbi_dataset directory.
+    Download Nextstrain FASTA for all serotypes, cat, length-filter, collect metadata.
+    Returns (filtered_fasta_path, metadata_df).
     """
-    zip_path = outdir / "ncbi_dengue_all.zip"
-    unzip_dir = outdir / "ncbi_dataset_download"
+    log.info("=== Phase 1: Nextstrain sequences ===")
+
+    # Download per-serotype FASTAs
+    per_sero_fastas = []
+    for sero, url in NEXTSTRAIN_SEQS.items():
+        out = raw_dir / f"nextstrain_seqs_{sero.lower()}.fasta"
+        if download_zst_fasta(url, out, f"Nextstrain {sero}"):
+            per_sero_fastas.append((sero, out))
+
+    if not per_sero_fastas:
+        log.error("No Nextstrain sequences downloaded.")
+        sys.exit(1)
+
+    # Concatenate
+    all_ns_fasta = raw_dir / "nextstrain_seqs_all.fasta"
+    with open(all_ns_fasta, "wb") as out_fh:
+        for _, fa in per_sero_fastas:
+            with open(fa, "rb") as fh:
+                shutil.copyfileobj(fh, out_fh)
+    log.info("Concatenated %d serotype FASTAs → %s (%d seqs)",
+             len(per_sero_fastas), all_ns_fasta, count_seqs(all_ns_fasta))
+
+    # Length filter
+    ns_filtered = proc_dir / "nextstrain_seqs_full.fasta"
+    run(["seqkit", "seq", "-m", str(MIN_LEN), "-M", str(MAX_LEN),
+         str(all_ns_fasta), "-o", str(ns_filtered)], "seqkit length filter [Nextstrain]")
+    n_ns = count_seqs(ns_filtered)
+    log.info("Nextstrain full genomes (≥%d bp): %d", MIN_LEN, n_ns)
+
+    # Load metadata TSVs (produced by 01_query_availability.py)
+    meta_dfs = []
+    for sero in ["DENV1", "DENV2", "DENV3", "DENV4"]:
+        meta_path = raw_dir / f"nextstrain_metadata_{sero.lower()}.tsv"
+        if meta_path.exists():
+            df = pd.read_csv(meta_path, sep="\t", low_memory=False)
+            df["serotype"] = sero
+            meta_dfs.append(df)
+        else:
+            log.warning("Nextstrain metadata not found: %s — run 01_query_availability.py first", meta_path)
+
+    if not meta_dfs:
+        log.error("No Nextstrain metadata found. Run 01_query_availability.py first.")
+        sys.exit(1)
+
+    ns_meta = pd.concat(meta_dfs, ignore_index=True)
+
+    # Keep only accessions retained after length filter
+    retained_ids = set(subprocess.run(
+        ["seqkit", "seq", "--name", "--only-id", str(ns_filtered)],
+        capture_output=True, text=True
+    ).stdout.strip().splitlines())
+
+    # Nextstrain uses 'accession' or 'strain' as ID; try both
+    id_col = "accession" if "accession" in ns_meta.columns else "strain"
+    ns_meta_full = ns_meta[ns_meta[id_col].isin(retained_ids)].copy()
+
+    # Standardise host columns
+    host_col = next((c for c in ["host", "Host", "host_species"] if c in ns_meta_full.columns), None)
+    if host_col:
+        ns_meta_full["host_category"] = ns_meta_full[host_col].fillna("").apply(assign_host_category)
+    else:
+        ns_meta_full["host_category"] = "unknown"
+
+    out_meta = proc_dir / "nextstrain_metadata_full.tsv"
+    ns_meta_full.to_csv(out_meta, sep="\t", index=False)
+    log.info("Nextstrain metadata → %s (%d rows)", out_meta, len(ns_meta_full))
+
+    return ns_filtered, ns_meta_full
+
+
+# ── Phase 2: NCBI complement ──────────────────────────────────────────────────
+
+def download_ncbi_complement(
+    raw_dir: Path, proc_dir: Path, ns_accessions: set[str]
+) -> tuple[Path, pd.DataFrame]:
+    """
+    Download all DENV from NCBI (no --complete-only), subtract Nextstrain accessions,
+    length-filter, return complement FASTA + metadata.
+    """
+    log.info("=== Phase 2: NCBI complement ===")
+
+    zip_path = raw_dir / "ncbi_dengue_all.zip"
+    unzip_dir = raw_dir / "ncbi_dataset_download"
 
     api_key = os.environ.get("NCBI_API_KEY", "")
     cmd = [
         "datasets", "download", "virus", "genome",
         "taxon", DENV_TAXID,
-        # No --complete-only: submitter flag is inconsistent. Length filtering
-        # (--min-len 10000) is applied by seqkit after download.
-        "--include", "genome,cds,gff3,info",
+        # No --complete-only: length filter applied by seqkit below
+        "--include", "genome,info",
         "--filename", str(zip_path),
     ]
     if api_key:
         cmd += ["--api-key", api_key]
-        log.info("Using NCBI API key")
     else:
-        log.warning("NCBI_API_KEY not set — downloads may be slower")
+        log.warning("NCBI_API_KEY not set — downloads may be throttled")
 
-    log.info("=== Phase 1: Downloading NCBI genomes ===")
-    run(cmd, "datasets download")
+    run(cmd, "datasets download NCBI")
     log.info("Downloaded → %s (%.1f MB)", zip_path, zip_path.stat().st_size / 1e6)
 
-    # Unzip
-    log.info("Unzipping …")
     if unzip_dir.exists():
         shutil.rmtree(unzip_dir)
     with zipfile.ZipFile(zip_path, "r") as zf:
         zf.extractall(unzip_dir)
-    log.info("Unzipped → %s", unzip_dir)
+    zip_path.unlink()
 
-    if not keep_zip:
-        zip_path.unlink()
-        log.info("Removed zip archive")
-
-    return unzip_dir
-
-
-# ── Phase 2: Parse metadata ───────────────────────────────────────────────────
-
-def parse_metadata(unzip_dir: Path, raw_outdir: Path) -> pd.DataFrame:
-    """
-    Parse data_report.jsonl from the downloaded package.
-    Fields: accession, serotype, host_organism, host_category,
-            country, region, collection_date, length, source_db, etc.
-    """
-    log.info("=== Phase 2: Parsing metadata ===")
-
-    # data_report.jsonl can live in different locations depending on datasets version
-    candidates = list(unzip_dir.rglob("data_report.jsonl"))
-    if not candidates:
-        log.error("data_report.jsonl not found under %s", unzip_dir)
+    # Locate FASTA and metadata
+    fna_candidates = list(unzip_dir.rglob("genomic.fna"))
+    jsonl_candidates = list(unzip_dir.rglob("data_report.jsonl"))
+    if not fna_candidates or not jsonl_candidates:
+        log.error("NCBI package missing genomic.fna or data_report.jsonl")
         sys.exit(1)
-    report_path = candidates[0]
-    log.info("Metadata file: %s", report_path)
 
+    raw_fasta  = raw_dir / "ncbi_all_raw.fasta"
+    shutil.copy2(fna_candidates[0], raw_fasta)
+    log.info("NCBI raw FASTA: %d seqs", count_seqs(raw_fasta))
+
+    # Parse metadata
     records = []
-    with open(report_path) as fh:
+    with open(jsonl_candidates[0]) as fh:
         for line in fh:
             line = line.strip()
             if not line:
@@ -176,14 +277,10 @@ def parse_metadata(unzip_dir: Path, raw_outdir: Path) -> pd.DataFrame:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-
-            host_info = rec.get("host", {})
+            host_name = rec.get("host", {}).get("organism_name", "")
+            organism  = rec.get("virus", {}).get("organism_name", "")
             isolate   = rec.get("isolate", {})
             location  = rec.get("location", {})
-            virus     = rec.get("virus", {})
-            organism  = virus.get("organism_name", "")
-            host_name = host_info.get("organism_name", "")
-
             records.append({
                 "accession":       rec.get("accession", ""),
                 "serotype":        assign_serotype(organism),
@@ -193,174 +290,141 @@ def parse_metadata(unzip_dir: Path, raw_outdir: Path) -> pd.DataFrame:
                 "completeness":    rec.get("completeness", ""),
                 "collection_date": isolate.get("collection_date", ""),
                 "isolate_name":    isolate.get("name", ""),
-                "isolate_source":  isolate.get("source", ""),
                 "country":         location.get("geographic_location", ""),
                 "region":          location.get("geographic_region", ""),
                 "virus_name":      organism,
-                "source_db":       rec.get("source_database", ""),
-                "release_date":    rec.get("release_date", ""),
+                "source":          "NCBI_GenBank",
             })
+    ncbi_meta = pd.DataFrame(records)
+    log.info("NCBI metadata: %d records", len(ncbi_meta))
 
-    meta_df = pd.DataFrame(records)
-    out_path = raw_outdir / "denv_all_metadata.tsv"
-    meta_df.to_csv(out_path, sep="\t", index=False)
-    log.info("Parsed %d records → %s", len(meta_df), out_path)
+    # Subtract Nextstrain accessions
+    complement_acc = set(ncbi_meta["accession"]) - ns_accessions
+    complement_meta = ncbi_meta[ncbi_meta["accession"].isin(complement_acc)].copy()
+    log.info("NCBI complement (not in Nextstrain): %d sequences", len(complement_meta))
 
-    # Summary by serotype × host
-    summary = meta_df.groupby(["serotype", "host_category"]).size().reset_index(name="n")
-    log.info("\nRaw counts:\n%s", summary.to_string(index=False))
+    # Write accession allowlist for seqkit grep
+    acc_file = proc_dir / "ncbi_complement_accessions.txt"
+    complement_meta["accession"].to_csv(acc_file, index=False, header=False)
 
-    return meta_df
+    # grep + length filter
+    ncbi_grep   = proc_dir / "ncbi_complement_grep.fasta"
+    ncbi_filtered = proc_dir / "ncbi_complement.fasta"
+    run(["seqkit", "grep", "-f", str(acc_file), str(raw_fasta), "-o", str(ncbi_grep)],
+        "seqkit grep [NCBI complement]")
+    run(["seqkit", "seq", "-m", str(MIN_LEN), "-M", str(MAX_LEN),
+         str(ncbi_grep), "-o", str(ncbi_filtered)], "seqkit length filter [NCBI]")
+    ncbi_grep.unlink(missing_ok=True)
+    acc_file.unlink(missing_ok=True)
 
+    n_ncbi = count_seqs(ncbi_filtered)
+    log.info("NCBI complement full genomes (≥%d bp): %d", MIN_LEN, n_ncbi)
 
-# ── Phase 3: Copy + locate FASTA ─────────────────────────────────────────────
-
-def locate_fasta(unzip_dir: Path, raw_outdir: Path) -> Path:
-    """Find and copy the merged genomic FASTA."""
-    log.info("=== Phase 3: Locating FASTA ===")
-    candidates = list(unzip_dir.rglob("genomic.fna"))
-    if not candidates:
-        log.error("genomic.fna not found under %s", unzip_dir)
-        sys.exit(1)
-    src = candidates[0]
-    dst = raw_outdir / "denv_all_raw.fasta"
-    shutil.copy2(src, dst)
-    log.info("FASTA → %s", dst)
-    return dst
-
-
-# ── Phase 4: Filter and deduplicate ──────────────────────────────────────────
-
-def filter_and_dedup(
-    raw_fasta: Path,
-    meta_df: pd.DataFrame,
-    processed_dir: Path,
-    host_categories: list[str],
-    min_len: int,
-    max_len: int,
-) -> None:
-    """
-    1. Build accession allowlist from metadata (host filter).
-    2. seqkit grep to keep only allowed accessions.
-    3. seqkit seq to length-filter.
-    4. seqkit rmdup to remove exact duplicates by sequence ID.
-    5. Write filtered metadata TSV.
-    """
-    log.info("=== Phase 4: Filtering and deduplication ===")
-    processed_dir.mkdir(parents=True, exist_ok=True)
-
-    # Host filter
-    keep_df = meta_df[meta_df["host_category"].isin(host_categories)].copy()
-    log.info("Host filter (%s): %d / %d sequences retained",
-             "+".join(host_categories), len(keep_df), len(meta_df))
-
-    if keep_df.empty:
-        log.warning("No sequences pass host filter — check host_categories argument.")
-        return
-
-    # Write accession list for seqkit grep
-    acc_list = processed_dir / "keep_accessions.txt"
-    keep_df["accession"].to_csv(acc_list, index=False, header=False)
-
-    step1 = processed_dir / "host_filtered.fasta"
-    step2 = processed_dir / "length_filtered.fasta"
-    step3 = processed_dir / "denv_filtered.fasta"
-
-    # Step 1 — seqkit grep by accession
-    run(
-        ["seqkit", "grep", "-f", str(acc_list), str(raw_fasta), "-o", str(step1)],
-        "seqkit grep"
-    )
-    log.info("After host filter: %s", _count_seqs(step1))
-
-    # Step 2 — seqkit length filter
-    run(
-        ["seqkit", "seq", "-m", str(min_len), "-M", str(max_len),
-         str(step1), "-o", str(step2)],
-        "seqkit length filter"
-    )
-    log.info("After length filter [%d–%d]: %s", min_len, max_len, _count_seqs(step2))
-
-    # Step 3 — seqkit rmdup (by sequence ID, not sequence content)
-    run(
-        ["seqkit", "rmdup", "-n", str(step2), "-o", str(step3)],
-        "seqkit rmdup"
-    )
-    log.info("After deduplication: %s", _count_seqs(step3))
-
-    # Clean up intermediates
-    step1.unlink(missing_ok=True)
-    step2.unlink(missing_ok=True)
-    acc_list.unlink(missing_ok=True)
-
-    # ── Phase 5: Validation & filtered metadata ───────────────────────────────
-    log.info("=== Phase 5: Validation ===")
-
-    # Extract retained accessions from filtered FASTA
-    result = subprocess.run(
-        ["seqkit", "seq", "--name", "--only-id", str(step3)],
+    # Keep only retained accessions in metadata
+    retained = set(subprocess.run(
+        ["seqkit", "seq", "--name", "--only-id", str(ncbi_filtered)],
         capture_output=True, text=True
-    )
-    retained_ids = set(result.stdout.strip().splitlines())
-    log.info("Retained unique accessions: %d", len(retained_ids))
+    ).stdout.strip().splitlines())
+    complement_meta = complement_meta[complement_meta["accession"].isin(retained)].copy()
 
-    # Cross-check against metadata
-    filtered_meta = keep_df[keep_df["accession"].isin(retained_ids)].copy()
-    meta_out = processed_dir / "denv_filtered_metadata.tsv"
-    filtered_meta.to_csv(meta_out, sep="\t", index=False)
-    log.info("Filtered metadata → %s (%d rows)", meta_out, len(filtered_meta))
+    out_meta = proc_dir / "ncbi_complement_metadata.tsv"
+    complement_meta.to_csv(out_meta, sep="\t", index=False)
+    log.info("NCBI complement metadata → %s (%d rows)", out_meta, len(complement_meta))
 
-    # Check for duplicates
-    dup_count = len(retained_ids) - filtered_meta["accession"].nunique()
-    if dup_count != 0:
-        log.warning("Accession count mismatch — check for duplicate IDs in FASTA")
-    else:
-        log.info("No duplicate accessions in final dataset")
+    return ncbi_filtered, complement_meta
+
+
+# ── Phase 3: Merge + validate ─────────────────────────────────────────────────
+
+def merge_and_validate(
+    ns_fasta: Path, ns_meta: pd.DataFrame,
+    ncbi_fasta: Path, ncbi_meta: pd.DataFrame,
+    proc_dir: Path
+):
+    log.info("=== Phase 3: Merge and validate ===")
+
+    # Cat FASTAs
+    merged_fasta = proc_dir / "denv_final.fasta"
+    with open(merged_fasta, "wb") as out:
+        for fa in [ns_fasta, ncbi_fasta]:
+            if fa.exists() and fa.stat().st_size > 0:
+                with open(fa, "rb") as fh:
+                    shutil.copyfileobj(fh, out)
+
+    # Final dedup by ID
+    dedup_fasta = proc_dir / "denv_final_dedup.fasta"
+    run(["seqkit", "rmdup", "-n", str(merged_fasta), "-o", str(dedup_fasta)], "seqkit rmdup")
+    merged_fasta.unlink()
+    dedup_fasta.rename(merged_fasta)
+
+    n_final = count_seqs(merged_fasta)
+    log.info("Final dataset: %d sequences → %s", n_final, merged_fasta)
+
+    # Merge metadata — align columns as best we can
+    ns_meta["source"] = "Nextstrain"
+    shared_cols = ["accession", "serotype", "host_category", "source"]
+    for col in shared_cols:
+        if col not in ns_meta.columns:
+            ns_meta[col] = ""
+        if col not in ncbi_meta.columns:
+            ncbi_meta[col] = ""
+
+    merged_meta = pd.concat([ns_meta, ncbi_meta], ignore_index=True)
+
+    # Cross-check: keep only sequences present in final FASTA
+    retained = set(subprocess.run(
+        ["seqkit", "seq", "--name", "--only-id", str(merged_fasta)],
+        capture_output=True, text=True
+    ).stdout.strip().splitlines())
+
+    id_col = next((c for c in ["accession", "strain"] if c in merged_meta.columns), None)
+    if id_col:
+        merged_meta = merged_meta[merged_meta[id_col].isin(retained)]
+
+    meta_out = proc_dir / "denv_final_metadata.tsv"
+    merged_meta.to_csv(meta_out, sep="\t", index=False)
+    log.info("Final metadata → %s (%d rows)", meta_out, len(merged_meta))
 
     # Final summary
-    summary = filtered_meta.groupby(["serotype", "host_category"]).size().reset_index(name="n")
-    log.info("\nFinal counts:\n%s", summary.to_string(index=False))
-    log.info("=== Done. Final FASTA → %s ===", step3)
-
-
-def _count_seqs(fasta: Path) -> str:
-    r = subprocess.run(["seqkit", "stats", "-T", str(fasta)], capture_output=True, text=True)
-    lines = r.stdout.strip().splitlines()
-    return lines[1] if len(lines) > 1 else "?"
+    summary = merged_meta.groupby(["serotype", "host_category", "source"]).size().reset_index(name="n")
+    log.info("\n=== FINAL DATASET SUMMARY ===\n%s", summary.to_string(index=False))
+    log.info("=== Done. Final FASTA → %s ===", merged_fasta)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="Download + filter DENV complete genomes")
-    parser.add_argument("--outdir",    default="data",     help="Base output dir (default: data)")
-    parser.add_argument("--min-len",   type=int, default=MIN_LEN_DEFAULT)
-    parser.add_argument("--max-len",   type=int, default=MAX_LEN_DEFAULT)
-    parser.add_argument("--hosts",     nargs="+", default=["human", "mosquito"],
-                        choices=["human", "mosquito", "other", "unknown"],
-                        help="Host categories to retain (default: human mosquito)")
-    parser.add_argument("--keep-zip",  action="store_true", help="Keep the downloaded zip")
+    parser = argparse.ArgumentParser(description="Download DENV full genomes (Nextstrain-first)")
+    parser.add_argument("--outdir",   default="data", help="Base output dir (default: data)")
+    parser.add_argument("--skip-ncbi", action="store_true", help="Only download Nextstrain sequences")
     args = parser.parse_args()
 
-    raw_dir       = Path(args.outdir) / "raw"
-    processed_dir = Path(args.outdir) / "processed"
+    raw_dir  = Path(args.outdir) / "raw"
+    proc_dir = Path(args.outdir) / "processed"
     raw_dir.mkdir(parents=True, exist_ok=True)
-    processed_dir.mkdir(parents=True, exist_ok=True)
+    proc_dir.mkdir(parents=True, exist_ok=True)
 
     check_dependencies()
-    log.info("=== DENV genome download pipeline ===")
-    log.info("Hosts: %s | Length: %d–%d bp", args.hosts, args.min_len, args.max_len)
+    log.info("=== DENV genome download | Nextstrain-first strategy ===")
+    log.info("Length filter: %d–%d bp | Output: %s", MIN_LEN, MAX_LEN, args.outdir)
 
-    unzip_dir = download_ncbi(raw_dir, args.keep_zip)
-    meta_df   = parse_metadata(unzip_dir, raw_dir)
-    raw_fasta  = locate_fasta(unzip_dir, raw_dir)
+    # Phase 1: Nextstrain
+    ns_fasta, ns_meta = download_nextstrain_seqs(raw_dir, proc_dir)
+    ns_accessions = set(ns_meta.get("accession", ns_meta.get("strain", pd.Series())).dropna())
 
-    filter_and_dedup(
-        raw_fasta, meta_df, processed_dir,
-        host_categories=args.hosts,
-        min_len=args.min_len,
-        max_len=args.max_len,
-    )
+    if args.skip_ncbi:
+        log.info("--skip-ncbi: skipping NCBI download")
+        # Still save as final
+        ns_fasta.rename(proc_dir / "denv_final.fasta")
+        ns_meta.to_csv(proc_dir / "denv_final_metadata.tsv", sep="\t", index=False)
+        log.info("=== Done (Nextstrain only) ===")
+        return
+
+    # Phase 2: NCBI complement
+    ncbi_fasta, ncbi_meta = download_ncbi_complement(raw_dir, proc_dir, ns_accessions)
+
+    # Phase 3: Merge
+    merge_and_validate(ns_fasta, ns_meta, ncbi_fasta, ncbi_meta, proc_dir)
 
 
 if __name__ == "__main__":
