@@ -45,11 +45,16 @@ log = logging.getLogger(__name__)
 DENV_TAXON = "dengue virus"
 
 # Serotype name patterns (from virus.organism_name field)
+# Handles both Arabic (type 1) and Roman numerals (type I) — both appear in NCBI
 SEROTYPE_MAP = {
-    "dengue virus type 1": "DENV1", "dengue virus 1": "DENV1",
-    "dengue virus type 2": "DENV2", "dengue virus 2": "DENV2",
-    "dengue virus type 3": "DENV3", "dengue virus 3": "DENV3",
-    "dengue virus type 4": "DENV4", "dengue virus 4": "DENV4",
+    "dengue virus type 1": "DENV1", "dengue virus type i": "DENV1",
+    "dengue virus 1": "DENV1",
+    "dengue virus type 2": "DENV2", "dengue virus type ii": "DENV2",
+    "dengue virus 2": "DENV2",
+    "dengue virus type 3": "DENV3", "dengue virus type iii": "DENV3",
+    "dengue virus 3": "DENV3",
+    "dengue virus type 4": "DENV4", "dengue virus type iv": "DENV4",
+    "dengue virus 4": "DENV4",
 }
 
 # Nextstrain pre-curated metadata — zstd-compressed TSVs
@@ -136,7 +141,9 @@ def query_ncbi(outdir: Path) -> pd.DataFrame:
     cmd = [
         "datasets", "summary", "virus", "genome",
         "taxon", DENV_TAXON,
-        "--complete-only",
+        # NOTE: --complete-only is NOT used here — "COMPLETE" is submitter-assigned
+        # and inconsistent. Nextstrain data shows ~8k DENV2 sequences ≥10kb, but
+        # --complete-only returns only ~1.7k. We query all and filter by length downstream.
         "--as-json-lines",
     ]
     if api_key:

@@ -47,11 +47,16 @@ DENV_TAXID   = "12637"   # Dengue virus species (all 4 serotypes)
 MIN_LEN_DEFAULT = 10_000
 MAX_LEN_DEFAULT = 12_000
 
+# Serotype name patterns — handles Arabic and Roman numerals (both appear in NCBI)
 SEROTYPE_MAP = {
-    "dengue virus type 1": "DENV1", "dengue virus 1": "DENV1",
-    "dengue virus type 2": "DENV2", "dengue virus 2": "DENV2",
-    "dengue virus type 3": "DENV3", "dengue virus 3": "DENV3",
-    "dengue virus type 4": "DENV4", "dengue virus 4": "DENV4",
+    "dengue virus type 1": "DENV1", "dengue virus type i": "DENV1",
+    "dengue virus 1": "DENV1",
+    "dengue virus type 2": "DENV2", "dengue virus type ii": "DENV2",
+    "dengue virus 2": "DENV2",
+    "dengue virus type 3": "DENV3", "dengue virus type iii": "DENV3",
+    "dengue virus 3": "DENV3",
+    "dengue virus type 4": "DENV4", "dengue virus type iv": "DENV4",
+    "dengue virus 4": "DENV4",
 }
 
 
@@ -113,7 +118,8 @@ def download_ncbi(outdir: Path, keep_zip: bool) -> Path:
     cmd = [
         "datasets", "download", "virus", "genome",
         "taxon", DENV_TAXID,
-        "--complete-only",
+        # No --complete-only: submitter flag is inconsistent. Length filtering
+        # (--min-len 10000) is applied by seqkit after download.
         "--include", "genome,cds,gff3,info",
         "--filename", str(zip_path),
     ]
