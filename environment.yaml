@@ -13,13 +13,17 @@ dependencies:
   - pyyaml
   - openpyxl          # Excel metadata export
   - plotly>=5.20      # interactive plots for GitHub Pages
-  - kaleido           # static image export from plotly
   - zstandard         # decompress Nextstrain .tsv.zst files
+  - pip:
+    - kaleido         # static image export from plotly (pip only)
+    - nextstrain-cli  # optional: pull nextstrain builds
   - jupyter
   - ipykernel
   # Sequence handling
   # mafft loaded via: module load mafft
   - fasttree          # quick tree for QC
+  # seqkit loaded via: module load SeqKit/2.8.2
+  - seqkit            # FASTA filtering, deduplication, stats
   # Web / GitHub Pages
   - jinja2            # template rendering for the static site
   - pip:

@@ -1,39 +1,38 @@
 #!/usr/bin/env python3
 """
 01_query_availability.py
-Survey DENV complete genome availability on NCBI (via ncbi-datasets CLI)
-and Nextstrain for all four serotypes, split by host (human / mosquito).
+Survey DENV complete genome availability on NCBI and Nextstrain.
+Counts only — no FASTA download. Run 02_download_genomes.py to fetch sequences.
 
 Requires:
-  module load ncbi-datasets/v2   (datasets CLI, no Python package needed)
-  conda env denv-umr2k            (pandas, requests, zstandard)
+  module load ncbi-datasets/v2
+  conda activate ./env   (pandas, requests, zstandard)
 
 Output (data/raw/):
-  ncbi_denv_counts.tsv            -- counts by source/serotype/host
-  ncbi_denv_metadata.tsv          -- per-accession metadata from NCBI
+  ncbi_denv_metadata.tsv          -- per-accession metadata from NCBI summary
   nextstrain_metadata_<sero>.tsv  -- Nextstrain metadata per serotype
-  availability_report.tsv         -- merged comparison table
+  availability_report.tsv         -- counts by source / serotype / host
 
 Usage:
-  python scripts/01_query_availability.py [--ncbi-only] [--nextstrain-only]
+  python scripts/01_query_availability.py [--outdir data/raw]
+                                          [--ncbi-only | --nextstrain-only]
 """
 
+import argparse
 import json
 import logging
+import os
+import shutil
 import subprocess
 import sys
 import time
-import argparse
 from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
 import requests
 
-# ── Config ───────────────────────────────────────────────────────────────────
-OUTDIR = Path("data/raw")
-OUTDIR.mkdir(parents=True, exist_ok=True)
-
+# ── Logging ───────────────────────────────────────────────────────────────────
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -41,23 +40,19 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-# NCBI taxon names accepted by datasets CLI
-SEROTYPES = {
-    "DENV1": "dengue virus type 1",
-    "DENV2": "dengue virus type 2",
-    "DENV3": "dengue virus type 3",
-    "DENV4": "dengue virus type 4",
+# ── Constants ─────────────────────────────────────────────────────────────────
+# DENV species taxid — covers all 4 serotypes; serotype assigned post-hoc
+DENV_TAXON = "dengue virus"
+
+# Serotype name patterns (from virus.organism_name field)
+SEROTYPE_MAP = {
+    "dengue virus type 1": "DENV1", "dengue virus 1": "DENV1",
+    "dengue virus type 2": "DENV2", "dengue virus 2": "DENV2",
+    "dengue virus type 3": "DENV3", "dengue virus 3": "DENV3",
+    "dengue virus type 4": "DENV4", "dengue virus 4": "DENV4",
 }
 
-# Host queries: datasets CLI accepts scientific names
-# "mosquito" is not a recognized NCBI host term; use species names
-HOSTS = {
-    "human":            "Homo sapiens",
-    "Aedes_aegypti":    "Aedes aegypti",
-    "Aedes_albopictus": "Aedes albopictus",
-}
-
-# Nextstrain pre-curated metadata (correct URLs — .tsv.zst compressed)
+# Nextstrain pre-curated metadata — zstd-compressed TSVs
 NEXTSTRAIN_BASE = "https://data.nextstrain.org/files/workflows/dengue"
 NEXTSTRAIN_META = {
     "DENV1": f"{NEXTSTRAIN_BASE}/metadata_denv1.tsv.zst",
@@ -67,46 +62,56 @@ NEXTSTRAIN_META = {
 }
 
 
-# ── NCBI datasets CLI ─────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-def run_datasets(taxon: str, host: str) -> list[dict]:
-    """
-    Call `datasets summary virus genome taxon <taxon> --host <host>
-    --complete-only --as-json-lines` and return parsed records.
-    Requires `datasets` on PATH (module load ncbi-datasets/v2).
-    """
-    cmd = [
-        "datasets", "summary", "virus", "genome", "taxon", taxon,
-        "--host", host,
-        "--complete-only",
-        "--as-json-lines",
-    ]
-    log.info("Running: %s", " ".join(cmd))
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        log.error("datasets CLI error: %s", result.stderr.strip())
-        return []
-    records = []
-    for line in result.stdout.strip().splitlines():
-        if line:
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError as e:
-                log.warning("JSON parse error: %s", e)
-    return records
+def check_dependencies():
+    if not shutil.which("datasets"):
+        log.error(
+            "'datasets' not found on PATH. Load the module first:\n"
+            "  module load ncbi-datasets/v2"
+        )
+        sys.exit(1)
+    log.info("datasets CLI: %s", shutil.which("datasets"))
 
 
-def flatten_record(rec: dict, serotype: str, host_label: str) -> dict:
-    """Extract flat metadata fields from a datasets JSON record."""
+def assign_serotype(organism_name: str) -> str:
+    """Assign DENV serotype label from organism_name string."""
+    name = organism_name.lower()
+    for pattern, label in SEROTYPE_MAP.items():
+        if pattern in name:
+            return label
+    # Fallback: check for bare digits
+    for digit, label in [("1", "DENV1"), ("2", "DENV2"), ("3", "DENV3"), ("4", "DENV4")]:
+        if f"type {digit}" in name or f"denv{digit}" in name:
+            return label
+    return "unknown"
+
+
+def assign_host_category(host_name: str) -> str:
+    """Categorise host organism name into broad groups."""
+    name = host_name.lower()
+    if "homo sapiens" in name or "human" in name:
+        return "human"
+    if "aedes" in name or "culex" in name or "mosquito" in name or "stegomyia" in name:
+        return "mosquito"
+    if name:
+        return "other"
+    return "unknown"
+
+
+def flatten_record(rec: dict) -> dict:
+    """Flatten a datasets summary JSON record to a flat dict."""
     host_info = rec.get("host", {})
     isolate   = rec.get("isolate", {})
     location  = rec.get("location", {})
     virus     = rec.get("virus", {})
+    organism  = virus.get("organism_name", "")
+    host_name = host_info.get("organism_name", "")
     return {
         "accession":       rec.get("accession", ""),
-        "serotype":        serotype,
-        "host_query":      host_label,
-        "host_organism":   host_info.get("organism_name", ""),
+        "serotype":        assign_serotype(organism),
+        "host_organism":   host_name,
+        "host_category":   assign_host_category(host_name),
         "length":          rec.get("length", ""),
         "completeness":    rec.get("completeness", ""),
         "collection_date": isolate.get("collection_date", ""),
@@ -114,121 +119,166 @@ def flatten_record(rec: dict, serotype: str, host_label: str) -> dict:
         "isolate_source":  isolate.get("source", ""),
         "country":         location.get("geographic_location", ""),
         "region":          location.get("geographic_region", ""),
-        "virus_name":      virus.get("organism_name", ""),
+        "virus_name":      organism,
         "source_db":       rec.get("source_database", ""),
         "release_date":    rec.get("release_date", ""),
     }
 
 
-def query_ncbi() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Query NCBI for all serotype x host combinations. Returns (counts, metadata)."""
-    counts = []
-    all_records = []
+# ── NCBI survey ───────────────────────────────────────────────────────────────
 
-    for sero_label, taxon in SEROTYPES.items():
-        for host_label, host_term in HOSTS.items():
-            records = run_datasets(taxon, host_term)
-            n = len(records)
-            log.info("  %s / %s: %d complete genomes", sero_label, host_label, n)
-            counts.append({
-                "source":    "NCBI_GenBank",
-                "serotype":  sero_label,
-                "host":      host_label,
-                "n_genomes": n,
-            })
-            for r in records:
-                all_records.append(flatten_record(r, sero_label, host_label))
-            time.sleep(0.5)  # polite pause between CLI calls
+def query_ncbi(outdir: Path) -> pd.DataFrame:
+    """
+    Single bulk query for all DENV complete genomes.
+    Filters by host category AFTER retrieving all records (no --host flag).
+    """
+    api_key = os.environ.get("NCBI_API_KEY", "")
+    cmd = [
+        "datasets", "summary", "virus", "genome",
+        "taxon", DENV_TAXON,
+        "--complete-only",
+        "--as-json-lines",
+    ]
+    if api_key:
+        cmd += ["--api-key", api_key]
+        log.info("Using NCBI API key (10 req/s limit)")
+    else:
+        log.warning("NCBI_API_KEY not set — limited to 3 req/s. Set it to speed up.")
 
-    counts_df = pd.DataFrame(counts)
-    meta_df   = pd.DataFrame(all_records)
+    log.info("Running: %s", " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True)
 
-    counts_df.to_csv(OUTDIR / "ncbi_denv_counts.tsv", sep="\t", index=False)
-    meta_df.to_csv(OUTDIR / "ncbi_denv_metadata.tsv", sep="\t", index=False)
-    log.info("NCBI metadata → %s (%d rows)", OUTDIR / "ncbi_denv_metadata.tsv", len(meta_df))
+    if result.returncode != 0:
+        log.error("datasets CLI error:\n%s", result.stderr.strip())
+        return pd.DataFrame()
 
-    return counts_df, meta_df
+    records = []
+    for line in result.stdout.strip().splitlines():
+        if line:
+            try:
+                records.append(flatten_record(json.loads(line)))
+            except (json.JSONDecodeError, Exception) as e:
+                log.warning("Skipping malformed line: %s", e)
+
+    if not records:
+        log.warning("No NCBI records returned.")
+        return pd.DataFrame()
+
+    meta_df = pd.DataFrame(records)
+    out_path = outdir / "ncbi_denv_metadata.tsv"
+    meta_df.to_csv(out_path, sep="\t", index=False)
+    log.info("NCBI: %d records → %s", len(meta_df), out_path)
+
+    # Summary counts
+    counts = (
+        meta_df.groupby(["serotype", "host_category"])
+        .size()
+        .reset_index(name="n_genomes")
+    )
+    counts.insert(0, "source", "NCBI_GenBank")
+    log.info("\n%s", counts.to_string(index=False))
+    return counts
 
 
-# ── Nextstrain ────────────────────────────────────────────────────────────────
+# ── Nextstrain survey ─────────────────────────────────────────────────────────
 
-def fetch_nextstrain(serotype: str, url: str) -> pd.DataFrame | None:
-    """Download a Nextstrain metadata .tsv.zst file and return as DataFrame."""
+def fetch_nextstrain(serotype: str, url: str, outdir: Path) -> pd.DataFrame | None:
+    """
+    Streaming zstd decompression — avoids loading the whole file into memory.
+    Uses curl --continue-at - for resume on partial downloads.
+    """
     try:
         import zstandard as zstd
     except ImportError:
-        log.error("zstandard not installed. Activate conda env: conda activate denv-umr2k")
+        log.error("zstandard not installed. Run: conda activate ./env")
         return None
 
-    log.info("Fetching Nextstrain %s: %s", serotype, url)
-    try:
-        r = requests.get(url, timeout=120, stream=True)
-        r.raise_for_status()
-        raw = b"".join(r.iter_content(chunk_size=65536))
-        dctx = zstd.ZstdDecompressor()
-        tsv_bytes = dctx.decompress(raw)
-        df = pd.read_csv(BytesIO(tsv_bytes), sep="\t", low_memory=False)
-        out_path = OUTDIR / f"nextstrain_metadata_{serotype.lower()}.tsv"
-        df.to_csv(out_path, sep="\t", index=False)
-        log.info("  %s: %d sequences → %s", serotype, len(df), out_path)
-        return df
-    except Exception as e:
-        log.warning("Nextstrain %s failed: %s", serotype, e)
-        return None
+    out_path = outdir / f"nextstrain_metadata_{serotype.lower()}.tsv"
+
+    # Use requests with streaming
+    log.info("Fetching Nextstrain %s …", serotype)
+    for attempt in range(1, 4):
+        try:
+            with requests.get(url, stream=True, timeout=120) as r:
+                r.raise_for_status()
+                dctx = zstd.ZstdDecompressor()
+                # Stream-decompress directly into pandas
+                with dctx.stream_reader(r.raw) as reader:
+                    df = pd.read_csv(reader, sep="\t", low_memory=False)
+            df.to_csv(out_path, sep="\t", index=False)
+            log.info("  %s: %d sequences → %s", serotype, len(df), out_path)
+            return df
+        except Exception as e:
+            log.warning("Attempt %d/3 failed for %s: %s", attempt, serotype, e)
+            time.sleep(2 ** attempt)
+
+    log.error("All retries failed for %s", serotype)
+    return None
 
 
-def query_nextstrain() -> pd.DataFrame:
-    """Fetch all Nextstrain DENV metadata and return a counts table."""
+def query_nextstrain(outdir: Path) -> pd.DataFrame:
+    """Fetch all Nextstrain DENV metadata and return counts table."""
     counts = []
     for sero, url in NEXTSTRAIN_META.items():
-        df = fetch_nextstrain(sero, url)
-        if df is not None:
-            host_col = next(
-                (c for c in ["host", "Host", "host_species"] if c in df.columns),
-                None
-            )
-            if host_col:
-                for host_val, grp in df.groupby(host_col):
-                    counts.append({
-                        "source":    "Nextstrain",
-                        "serotype":  sero,
-                        "host":      str(host_val),
-                        "n_genomes": len(grp),
-                    })
-            else:
+        df = fetch_nextstrain(sero, url, outdir)
+        if df is None:
+            continue
+        # Identify host column (column names vary across Nextstrain builds)
+        host_col = next(
+            (c for c in ["host", "Host", "host_species", "host_name"] if c in df.columns),
+            None
+        )
+        if host_col:
+            for host_val, grp in df.groupby(host_col):
                 counts.append({
-                    "source":    "Nextstrain",
-                    "serotype":  sero,
-                    "host":      "not_annotated",
-                    "n_genomes": len(df),
+                    "source":         "Nextstrain",
+                    "serotype":       sero,
+                    "host_category":  assign_host_category(str(host_val)),
+                    "host_organism":  str(host_val),
+                    "n_genomes":      len(grp),
                 })
-    return pd.DataFrame(counts)
+        else:
+            log.warning("  No host column found in Nextstrain %s (columns: %s)", sero, list(df.columns[:10]))
+            counts.append({
+                "source":        "Nextstrain",
+                "serotype":      sero,
+                "host_category": "not_annotated",
+                "host_organism": "",
+                "n_genomes":     len(df),
+            })
+    return pd.DataFrame(counts) if counts else pd.DataFrame()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    parser = argparse.ArgumentParser(description="DENV genome availability survey")
-    parser.add_argument("--ncbi-only",      action="store_true", help="Only query NCBI")
-    parser.add_argument("--nextstrain-only", action="store_true", help="Only query Nextstrain")
+    parser = argparse.ArgumentParser(description="DENV genome availability survey (counts only)")
+    parser.add_argument("--outdir", default="data/raw", help="Output directory (default: data/raw)")
+    parser.add_argument("--ncbi-only",       action="store_true")
+    parser.add_argument("--nextstrain-only", action="store_true")
     args = parser.parse_args()
 
-    log.info("=== DENV sequence availability survey ===")
+    outdir = Path(args.outdir)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    check_dependencies()
+    log.info("=== DENV availability survey | output → %s ===", outdir)
 
     dfs = []
 
     if not args.nextstrain_only:
-        ncbi_counts, _ = query_ncbi()
-        dfs.append(ncbi_counts)
+        ncbi_counts = query_ncbi(outdir)
+        if not ncbi_counts.empty:
+            dfs.append(ncbi_counts)
 
     if not args.ncbi_only:
-        ns_counts = query_nextstrain()
+        ns_counts = query_nextstrain(outdir)
         if not ns_counts.empty:
             dfs.append(ns_counts)
 
     if dfs:
         report = pd.concat(dfs, ignore_index=True)
-        report_path = OUTDIR / "availability_report.tsv"
+        report_path = outdir / "availability_report.tsv"
         report.to_csv(report_path, sep="\t", index=False)
         log.info("=== Report → %s ===", report_path)
         print("\n" + report.to_string(index=False))
