@@ -20,7 +20,10 @@ mkdir -p logs
 echo "== Job started on $(hostname) at $(date) =="
 echo "== Working dir: $WORKDIR =="
 
-# Activate conda env (adjust path if needed)
+# Load ncbi-datasets CLI (provides `datasets` command)
+module load ncbi-datasets/v2
+
+# Activate conda env
 source /pasteur/appa/homes/cduitama/miniconda3/etc/profile.d/conda.sh
 conda activate denv-umr2k
 

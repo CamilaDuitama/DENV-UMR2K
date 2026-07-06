@@ -14,6 +14,7 @@ dependencies:
   - openpyxl          # Excel metadata export
   - plotly>=5.20      # interactive plots for GitHub Pages
   - kaleido           # static image export from plotly
+  - zstandard         # decompress Nextstrain .tsv.zst files
   - jupyter
   - ipykernel
   # Sequence handling
