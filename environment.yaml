@@ -12,12 +12,12 @@ dependencies:
   - tqdm
   - pyyaml
   - openpyxl          # Excel metadata export
-  - seaborn           # plots for QC
-  - matplotlib
+  - plotly>=5.20      # interactive plots for GitHub Pages
+  - kaleido           # static image export from plotly
   - jupyter
   - ipykernel
   # Sequence handling
-  - mafft             # multiple alignment
+  # mafft loaded via: module load mafft
   - fasttree          # quick tree for QC
   # Web / GitHub Pages
   - jinja2            # template rendering for the static site
