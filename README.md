@@ -1,56 +1,57 @@
 # DENV NS1 Evolution — CNRS UMR2K Seed Grant 2026
 
-**Bioinformatician:** Camila Duitama (Institut Pasteur)
+**Author:** Camila Duitama (Institut Pasteur)
 
 ## Overview
 
-Bioinformatics component of the UMR2K 2026 project integrating deep mutational scanning (DMS) data of dengue virus (DENV) NS1 into phylogenetic models to dissect host-specific selective pressures (human vs. mosquito).
+Bioinformatics component of the UMR2K 2026 project integrating deep mutational scanning (DMS) data of DENV NS1 into phylogenetic models to dissect host-specific selective pressures (human vs. mosquito).
 
-## Objectives
+**WP1:** Compare experimental MFEs against natural DENV NS1 diversity across serotypes and host environments.  
+**WP2:** Benchmark experimentally-informed phylogenetic models (phydms) against classical substitution models (phyloMAd).
 
-- **WP1:** Compare experimental mutation fitness effects (MFEs) against natural DENV NS1 diversity across serotypes and host environments.
-- **WP2:** Benchmark experimentally-informed phylogenetic models (phydms) against classical substitution models using model adequacy (phyloMAd).
+## Data source
 
-## Data Collection (this repo)
+**Nextstrain DENV** (primary) — pre-curated, QC'd, clade-annotated sequences from GenBank.  
+**NCBI GenBank** (complement) — sequences not in Nextstrain, downloaded via `ncbi-datasets` CLI.
 
-Focus: DENV **full genome** sequences from **human** and **mosquito** hosts.
+Full-genome criterion: `length ≥ 10,000 bp` AND `genome_coverage ≥ 0.95` AND `is_lab_host ≠ True`, human + mosquito hosts only.
 
-| Serotype | Priority |
-|----------|----------|
-| DENV2 | Primary |
-| DENV1/3/4 | Survey (availability-dependent) |
+## Current status
 
-### Sources under evaluation
+Availability survey complete. Interactive metadata report at:  
+**https://camiladuitama.github.io/DENV-UMR2K/**
 
-| Source | Access | Notes |
-|--------|--------|-------|
-| [NCBI Virus / GenBank](https://www.ncbi.nlm.nih.gov/labs/virus/) | Public | Curated full genomes, rich metadata |
-| [NCBI SRA](https://www.ncbi.nlm.nih.gov/sra) | Public | Raw reads, requires assembly |
-| [Nextstrain / nextstrain.org](https://nextstrain.org/dengue) | Public | Pre-filtered, phylogenetically curated |
-| [ViPR](https://www.viprbrc.org/) | Public | Virus Pathogen Resource, DENV-specific |
+Awaiting biologist review before initiating full genome download.
 
-## Repository Structure
+## Repository structure
 
 ```
 UMR2K/
-├── data/
-│   ├── raw/          # downloaded sequences and metadata
-│   └── processed/    # filtered, aligned datasets
-├── scripts/          # download and QC scripts
-├── docs/             # GitHub Pages site source
-└── README.md
+├── data/raw/          # survey metadata (Nextstrain TSVs, NCBI summary)
+├── data/processed/    # filtered FASTA + metadata (post-download)
+├── scripts/
+│   ├── 01_query_availability.py  # metadata survey (Nextstrain + NCBI)
+│   ├── 02_download_genomes.py    # Nextstrain-first download + seqkit filter
+│   ├── 03_build_site.py          # GitHub Pages report generator
+│   ├── run_query.slurm           # SLURM: survey job
+│   └── run_download.slurm        # SLURM: download job (64G, 8 CPU)
+├── docs/index.html    # GitHub Pages site
+├── environment.yaml   # conda env
+└── env/               # local conda env (gitignored)
 ```
 
-## GitHub Pages
+## Cluster usage
 
-A metadata summary website will be auto-generated at `docs/` and published via GitHub Pages, showing sequence counts, host distribution, geography, and temporal coverage of the final dataset.
+```bash
+module load ncbi-datasets/v2
+module load SeqKit/2.8.2
+mamba env create -f environment.yaml --prefix ./env
+conda activate ./env
 
-## Dependencies
-
-- Python ≥ 3.10
-- `Biopython`, `pandas`, `requests`
-- NCBI `datasets` CLI / `Entrez Direct`
-- Nextstrain CLI (optional)
+sbatch scripts/run_query.slurm      # availability survey
+python scripts/03_build_site.py     # rebuild site (submit node)
+sbatch scripts/run_download.slurm   # full download (after approval)
+```
 
 ## License
 
