@@ -3,6 +3,9 @@ __pycache__/
 *.pyc
 *.egg-info/
 .ipynb_checkpoints/
+# conda env (local install)
+env/
+
 data/raw/
 data/processed/
 logs/
