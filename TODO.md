@@ -41,7 +41,7 @@
 
 - [x] GitHub repo: https://github.com/CamilaDuitama/DENV-UMR2K
 - [x] GitHub Pages live from `docs/`
-- [ ] GitHub Actions to auto-rebuild site on push
+- [x] GitHub Actions to auto-rebuild site on push
 - [ ] Add NCBI API key as GitHub secret
 - [ ] Tag data freeze version when dataset is locked
 - [ ] Add `CITATION.cff`
