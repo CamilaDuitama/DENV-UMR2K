@@ -15,7 +15,10 @@
   - **Vaccine-derived sequences**: check whether these exist in DENV Nextstrain data and remove if significant
   - **Initial analysis requested**: Shannon entropy per site (amino acid level) across all proteins
   - **Reference**: https://www.nature.com/articles/s41559-026-02993-8#Sec10 (methods: natural diversity analysis)
-- [ ] **Check for vaccine-derived sequences** in Nextstrain DENV metadata (is_vaccine_strain field?)
+- [x] **Vaccine-derived sequences checked** (2026-07-10):
+  - 170 sequences excluded by existing `is_lab_host = True` filter
+  - 8 additional PDK-passage / chimeric strains added to hardcoded exclusion list in `02_download_genomes.py`
+  - Total vaccine burden: ~178/55k (0.3%) — negligible, as expected for DENV
 - [ ] Run download job (`sbatch scripts/run_download.slurm`)
 - [ ] QC final dataset: deduplication, length/coverage checks
 

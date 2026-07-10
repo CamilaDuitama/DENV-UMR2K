@@ -54,6 +54,20 @@ DENV_TAXID = "12637"
 MIN_LEN = 10_000
 MAX_LEN = 12_000
 
+# Vaccine / passage / chimeric strains not caught by is_lab_host=True.
+# Identified by scanning strain names in Nextstrain metadata (2026-07-10).
+# PDK = Primary Dog Kidney passage (attenuated); rDEN = recombinant chimeric.
+VACCINE_ACCESSIONS = {
+    "MW945952",  # RDENV1-WP-1A     — recombinant DENV1
+    "AF180818",  # 16007 (PDK-13)   — DENV1, PDK-13 passage attenuated
+    "U87412",    # PDK-53           — DENV2, PDK-53 attenuated vaccine
+    "KU725664",  # PDK53            — DENV2, PDK-53 variant
+    "M84728",    # 16681-PDK53      — DENV2, PDK-53 variant
+    "KJ160505",  # rDENV3-4         — DENV3/4 chimeric recombinant
+    "MW793459",  # PDK48            — DENV4, PDK-48 attenuated vaccine
+    "KJ160504",  # rDENV4           — recombinant DENV4
+}
+
 NEXTSTRAIN_BASE = "https://data.nextstrain.org/files/workflows/dengue"
 NEXTSTRAIN_SEQS = {
     "DENV1": f"{NEXTSTRAIN_BASE}/sequences_denv1.fasta.zst",
@@ -194,6 +208,12 @@ def download_nextstrain_seqs(raw_dir: Path, proc_dir: Path) -> tuple[Path, pd.Da
         sys.exit(1)
 
     ns_meta = pd.concat(meta_dfs, ignore_index=True)
+
+    # Remove vaccine / chimeric strains not caught by is_lab_host flag
+    vax_mask = ns_meta["accession"].isin(VACCINE_ACCESSIONS)
+    if vax_mask.sum():
+        log.info("Removing %d vaccine/chimeric accessions from Nextstrain metadata", vax_mask.sum())
+        ns_meta = ns_meta[~vax_mask].copy()
 
     # Keep only accessions retained after length filter
     retained_ids = set(subprocess.run(
