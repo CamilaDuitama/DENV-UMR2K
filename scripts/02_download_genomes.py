@@ -258,7 +258,9 @@ def download_ncbi_complement(
         "datasets", "download", "virus", "genome",
         "taxon", DENV_TAXID,
         # No --complete-only: length filter applied by seqkit below
-        "--include", "genome,info",
+        # "info" is not a valid --include value for virus downloads;
+        # data_report.jsonl is included automatically with every download
+        "--include", "genome",
         "--filename", str(zip_path),
     ]
     if api_key:
