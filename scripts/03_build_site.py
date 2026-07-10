@@ -62,7 +62,22 @@ ns["host_category"] = ns.apply(_host_cat, axis=1)
 
 # Exclude lab sequences
 lab = ns["is_lab_host"].fillna("").astype(str).str.lower() == "true"
+n_lab_excluded = int(lab.sum())
 ns_nolab = ns[~lab].copy()
+
+# PDK/chimeric strains excluded by name (not caught by is_lab_host)
+VACCINE_ACCESSIONS = {
+    "MW945952": ("RDENV1-WP-1A",    "DENV1", "Recombinant chimeric virus"),
+    "AF180818": ("16007 (PDK-13)",  "DENV1", "PDK-13 passage — attenuated vaccine candidate"),
+    "U87412":   ("PDK-53",          "DENV2", "PDK-53 passage — attenuated vaccine candidate"),
+    "KU725664": ("PDK53",           "DENV2", "PDK-53 variant"),
+    "M84728":   ("16681-PDK53",     "DENV2", "PDK-53 variant"),
+    "KJ160505": ("rDENV3-4",        "DENV3", "Chimeric DENV3/4 recombinant"),
+    "MW793459": ("PDK48",           "DENV4", "PDK-48 passage — attenuated vaccine candidate"),
+    "KJ160504": ("rDENV4",          "DENV4", "Recombinant chimeric DENV4"),
+}
+vax_mask = ns_nolab["accession"].isin(VACCINE_ACCESSIONS)
+ns_nolab = ns_nolab[~vax_mask].copy()
 
 # Full-genome filter — human and mosquito only
 full = ns_nolab[
@@ -308,15 +323,57 @@ today = date.today().strftime("%d %b %Y")
 n_total   = len(full)
 n_human   = int((full["host_category"]=="human").sum())
 n_mosquito= int((full["host_category"]=="mosquito").sum())
+
+# ── Table 3: Exclusion summary ────────────────────────────────────────────────
+tbl3 = f"""<table>
+<thead><tr><th>Category</th><th>n excluded</th><th>Reason</th></tr></thead><tbody>
+<tr>
+  <td>Lab-grown sequences (<code>is_lab_host = True</code>)</td>
+  <td>{n_lab_excluded:,}</td>
+  <td>Sequences passaged in cell lines (Vero, C6/36, etc.); host annotation is a cell line,
+  not a natural organism. May carry culture-adaptation mutations.</td>
+</tr>
+<tr>
+  <td>PDK-passage / chimeric strains (manual)</td>
+  <td>{len(VACCINE_ACCESSIONS)}</td>
+  <td>Vaccine candidates or engineered chimeras not flagged by <code>is_lab_host</code>.
+  Identified by scanning strain names. PDK = serially passaged in Primary Dog Kidney cells
+  (attenuated). rDEN = recombinant chimeric backbone. All carry non-natural mutation loads.</td>
+</tr>
+<tr>
+  <td>Other host (primates, rodents, unknown)</td>
+  <td>—</td>
+  <td>Not counted here; simply outside the human/mosquito scope of this project.</td>
+</tr>
+<tr class="total">
+  <td><b>Total excluded (lab/vaccine)</b></td>
+  <td><b>{n_lab_excluded + len(VACCINE_ACCESSIONS):,}</b></td>
+  <td></td>
+</tr>
+</tbody></table>
+
+<h4 style="margin:14px 0 6px;font-size:.88rem">PDK-passage and chimeric strains excluded by accession</h4>
+<table>
+<thead><tr><th>Accession</th><th>Strain name</th><th>Serotype</th><th>Reason</th></tr></thead>
+<tbody>"""
+for acc, (strain, sero, reason) in VACCINE_ACCESSIONS.items():
+    tbl3 += f"<tr><td><code>{acc}</code></td><td>{strain}</td><td>{sero}</td><td>{reason}</td></tr>\n"
+tbl3 += "</tbody></table>"
 n_lab     = int(lab.sum())
 
 body = ""
 
 body += card("table1","Table",1,"Dataset summary — human and mosquito full genomes by serotype",
     f"Counts of full genomes (length ≥{MIN_LEN:,} bp and genome_coverage ≥{MIN_COV}) "
-    f"from human and mosquito hosts only. Lab-adapted sequences ({n_lab} total) excluded. "
-    f"Sequences from other hosts (primates, rodents) and unannotated hosts are not included.",
+    f"from human and mosquito hosts only. Lab-adapted and vaccine-derived sequences excluded (see Table 2).",
     tbl1)
+
+body += card("table3","Table",2,"Excluded sequences — lab-grown, vaccine-derived, and chimeric strains",
+    "Sequences removed before analysis. "
+    f"<code>is_lab_host = True</code> sequences are flagged by Nextstrain from their GenBank host annotation. "
+    "The additional PDK-passage and chimeric strains were identified manually by scanning strain names "
+    "and are not caught by the automated flag.",
+    tbl3)
 
 body += card("figure1","Figure",1,"Full-genome counts by serotype and host",
     "Grouped bar chart showing full genomes (human and mosquito only) per serotype. "
@@ -396,6 +453,7 @@ if F[9]:
 # TOC
 toc_items = [
     ("table1","Table 1 — Dataset summary"),
+    ("table3","Table 2 — Excluded sequences"),
     ("figure1","Figure 1 — Counts by serotype &amp; host"),
     ("figure2","Figure 2 — Length distribution"),
     ("figure3","Figure 3 — Genome coverage distribution"),

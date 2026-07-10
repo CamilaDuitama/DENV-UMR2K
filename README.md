@@ -18,10 +18,8 @@ Full-genome criterion: `length ≥ 10,000 bp` AND `genome_coverage ≥ 0.95` AND
 
 ## Current status
 
-Availability survey complete. Interactive metadata report at:  
-**https://camiladuitama.github.io/DENV-UMR2K/**
-
-Awaiting biologist review before initiating full genome download.
+Download complete: **21,630 full genomes** in `data/processed/denv_final.fasta` (Nextstrain-only; 220 MB).  
+Interactive metadata report: **https://camiladuitama.github.io/DENV-UMR2K/**
 
 ## Repository structure
 
