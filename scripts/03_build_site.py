@@ -206,7 +206,13 @@ def fig4():
                              error_y=dict(type="data",
                                           array=[float(sub[c].std()) for c in avail_cols],
                                           visible=True)))
-    if "NS1" in avail_labels:
+    if "NS4A" in avail_labels and "NS4B" in avail_labels:
+        i_start = avail_labels.index("NS4A")
+        i_end   = avail_labels.index("NS4B")
+        fig.add_vrect(x0=i_start-0.5, x1=i_end+0.5, fillcolor="yellow", opacity=0.15,
+                      line_width=0, annotation_text="NS4A-2K-NS4B (likely target)",
+                      annotation_position="top left")
+    elif "NS1" in avail_labels:  # fallback if NS4A/NS4B not present
         i = avail_labels.index("NS1")
         fig.add_vrect(x0=i-0.5, x1=i+0.5, fillcolor="yellow", opacity=0.15,
                       line_width=0, annotation_text="NS1", annotation_position="top left")

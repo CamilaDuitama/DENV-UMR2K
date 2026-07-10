@@ -126,7 +126,7 @@ def assign_host_category(host: str) -> str:
     h = host.lower()
     if "homo sapiens" in h or "human" in h:
         return "human"
-    if "aedes" in h or "culex" in h or "mosquito" in h or "stegomyia" in h:
+    if any(x in h for x in ["aedes","culex","mosquito","stegomyia","culicidae"]):
         return "mosquito"
     return "other" if h else "unknown"
 
