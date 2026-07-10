@@ -34,10 +34,6 @@ echo "== seqkit:   $(which seqkit) =="
 # export NCBI_API_KEY="your_key_here"
 
 # ── Run download + filter pipeline ───────────────────────────────────────────
-python scripts/02_download_genomes.py \
-    --outdir data \
-    --min-len 10000 \
-    --max-len 12000 \
-    --hosts human mosquito
+python scripts/02_download_genomes.py --outdir data
 
 echo "== Job finished at $(date) =="
