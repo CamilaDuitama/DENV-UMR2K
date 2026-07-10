@@ -131,7 +131,6 @@ def _box_stats(vals):
     q1,med,q3 = np.percentile(vals,[25,50,75])
     iqr = q3-q1
     return dict(q1=[float(q1)], median=[float(med)], q3=[float(q3)],
-                mean=[float(vals.mean())], sd=[float(vals.std())],
                 lowerfence=[float(max(vals.min(), q1-1.5*iqr))],
                 upperfence=[float(min(vals.max(), q3+1.5*iqr))])
 
@@ -250,11 +249,15 @@ def fig7():
     agg = df.groupby(["country","host_type"]).size().reset_index(name="n")
     fig = go.Figure()
     for h,color in HC.items():
-        sub = agg[agg["host_type"]==h]
+        sub = agg[agg["host_type"]==h].copy()
+        if sub.empty: continue
+        # Scale each host independently so mosquito dots remain visible
+        max_n = sub["n"].max()
+        sub["dot_size"] = np.clip(6 + (sub["n"] / max_n) * 14, 6, 20)
         fig.add_trace(go.Scattergeo(
             locations=sub["country"],
             locationmode="country names",
-            marker=dict(size=np.clip(np.sqrt(sub["n"]), 3, 18),
+            marker=dict(size=sub["dot_size"],
                         color=color,
                         line_color="white", line_width=0.5, opacity=0.75),
             text=sub.apply(lambda r: f"{r['country']}: {r['n']:,} {h}", axis=1),
@@ -306,7 +309,7 @@ body += card("figure1","Figure",1,"Sequence counts by serotype and host",
     fig_html(F[1],"f1"))
 
 body += card("figure2","Figure",2,"Sequence length distribution by serotype and host",
-    f"Box plots show the median, interquartile range, and mean (diamond) of sequence length "
+    f"Box plots show the median, interquartile range, and whiskers (1.5×IQR) of sequence length "
     f"for human and mosquito genomes. All sequences are between {MIN_LEN:,} and 12,000 bp by design. "
     f"Mosquito sequences are slightly shorter on average.",
     fig_html(F[2],"f2"))
