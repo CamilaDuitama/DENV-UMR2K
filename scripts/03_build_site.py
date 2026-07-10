@@ -133,8 +133,7 @@ def _box_stats(vals):
     return dict(q1=[float(q1)], median=[float(med)], q3=[float(q3)],
                 mean=[float(vals.mean())], sd=[float(vals.std())],
                 lowerfence=[float(max(vals.min(), q1-1.5*iqr))],
-                upperfence=[float(min(vals.max(), q3+1.5*iqr))],
-                boxmean="sd")
+                upperfence=[float(min(vals.max(), q3+1.5*iqr))])
 
 def fig2():
     fig = go.Figure()
@@ -193,7 +192,7 @@ def fig4():
         fig.add_vrect(x0=i0-0.5, x1=i1+0.5, fillcolor="yellow", opacity=0.15,
                       line_width=0,
                       annotation_text="Likely target: NS4A–2K–NS4B",
-                      annotation_position="top right",
+                      annotation_position="bottom left",
                       annotation_font_size=11)
     fig.update_layout(barmode="group", height=420, xaxis_title="Gene",
                       yaxis_title="Mean coverage ± SD", yaxis=dict(range=[0,1.12]),
@@ -255,8 +254,9 @@ def fig7():
         fig.add_trace(go.Scattergeo(
             locations=sub["country"],
             locationmode="country names",
-            marker=dict(size=np.sqrt(sub["n"])*3, color=color,
-                        line_color="white", line_width=0.5, opacity=0.8),
+            marker=dict(size=np.clip(np.sqrt(sub["n"]), 3, 18),
+                        color=color,
+                        line_color="white", line_width=0.5, opacity=0.75),
             text=sub.apply(lambda r: f"{r['country']}: {r['n']:,} {h}", axis=1),
             name=h, hoverinfo="text",
         ))
