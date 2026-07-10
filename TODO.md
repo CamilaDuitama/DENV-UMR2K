@@ -17,9 +17,9 @@
 - [x] Vaccine/lab sequences checked and excluded:
   - 170 via `is_lab_host = True` (lab cell-line passages)
   - 8 PDK-passage / chimeric strains (hardcoded in `02_download_genomes.py`)
-- [x] **Download complete** — `data/processed/denv_final.fasta` (21,630 seqs, 220 MB, Nextstrain-only)
-  - NCBI complement pending: `--include genome,info` bug fixed; resubmit `run_download.slurm` to add non-Nextstrain sequences
-- [ ] QC final dataset: check host/serotype breakdown, length distribution
+- [x] **Download complete** — `data/processed/denv_final.fasta` (21,634 seqs, 220 MB, Nextstrain-only)
+  - NCBI complement pending: bug fixed (`--include genome`); resubmit `run_download.slurm`
+- [x] QC added to website: seqkit stats, serotype × host breakdown, length distribution
 
 ## WP1 — Natural diversity analysis
 

@@ -460,11 +460,91 @@ toc_items = [
     ("figure4","Figure 4 — Per-gene coverage"),
     ("figure5","Figure 5 — Temporal distribution"),
     ("figure6","Figure 6 — Geographic distribution"),
-    ("table2","Table 2 — Mosquito species &amp; relevance"),
+    ("table2","Table 3 — Mosquito species"),
     ("figure7","Figure 7 — Major lineage"),
     ("figure8","Figure 8 — Minor lineage"),
     ("figure9","Figure 9 — Genotype distribution"),
 ]
+
+# ── Final dataset QC (from data/processed/ if available) ─────────────────────
+FINAL_META = Path("data/processed/denv_final_metadata.tsv")
+qc_section = ""
+
+if FINAL_META.exists():
+    fd = pd.read_csv(FINAL_META, sep="\t", low_memory=False)
+    for col in ["length","genome_coverage"]:
+        fd[col] = pd.to_numeric(fd[col], errors="coerce")
+    fd["collection_year"] = pd.to_numeric(fd["date"].astype(str).str[:4], errors="coerce")
+
+    # host_category from host_type
+    def _hcat(row):
+        ht = str(row.get("host_type","")).strip()
+        if ht == "Human":    return "human"
+        if ht == "Mosquito": return "mosquito"
+        h = str(row.get("host","")).lower()
+        if "homo sapiens" in h or "human" in h: return "human"
+        if any(x in h for x in ["aedes","culex","mosquito","stegomyia","culicidae"]): return "mosquito"
+        return "other" if (h and h != "nan") else "unknown"
+    fd["host_category"] = fd.apply(_hcat, axis=1)
+
+    n_fd = len(fd)
+    fd_len = fd["length"].dropna()
+    fd_cov = fd["genome_coverage"].dropna()
+
+    # seqkit stats table
+    stats_tbl = f"""<table>
+<thead><tr><th>Metric</th><th>Value</th></tr></thead><tbody>
+<tr><td>Sequences (metadata)</td><td><b>{n_fd:,}</b></td></tr>
+<tr><td>Length min / mean / max (bp)</td><td>{int(fd_len.min()):,} / {fd_len.mean():.0f} / {int(fd_len.max()):,}</td></tr>
+<tr><td>Length std dev (bp)</td><td>{fd_len.std():.0f}</td></tr>
+<tr><td>Genome coverage mean ± SD</td><td>{fd_cov.mean():.4f} ± {fd_cov.std():.4f}</td></tr>
+<tr><td>Genome coverage min / median</td><td>{fd_cov.min():.4f} / {fd_cov.median():.4f}</td></tr>
+<tr><td>Human sequences</td><td>{(fd["host_category"]=="human").sum():,}</td></tr>
+<tr><td>Mosquito sequences</td><td>{(fd["host_category"]=="mosquito").sum():,}</td></tr>
+<tr><td>Other / unknown host</td><td>{fd["host_category"].isin(["other","unknown"]).sum():,}</td></tr>
+</tbody></table>"""
+
+    # Host × serotype bar (from final dataset)
+    fd_counts = fd.groupby(["serotype","host_category"]).size().reset_index(name="n")
+    fig_qc1 = px.bar(fd_counts, x="serotype", y="n", color="host_category",
+                     color_discrete_map=HOST_COLORS, barmode="stack",
+                     labels={"serotype":"Serotype","n":"# sequences","host_category":"Host"})
+    fig_qc1.update_layout(height=380, legend_title="Host", margin=dict(t=20,b=40))
+
+    # Length distribution from final dataset
+    fig_qc2 = go.Figure()
+    for sero in ["DENV1","DENV2","DENV3","DENV4"]:
+        vals = fd[fd["serotype"]==sero]["length"].dropna()
+        fig_qc2.add_trace(go.Histogram(x=vals, name=sero,
+                                        marker_color=SERO_COLORS.get(sero,"#999"),
+                                        opacity=0.7, xbins=dict(start=9900,end=11300,size=50)))
+    fig_qc2.update_layout(barmode="overlay", height=360,
+                           xaxis_title="Length (bp)", yaxis_title="# sequences",
+                           legend_title="Serotype", margin=dict(t=20,b=40))
+
+    n_qc = len(toc_items) + 1
+    toc_items += [
+        ("qc-stats",  f"Table {n_qc} — Final dataset seqkit stats"),
+        ("qc-hosts",  f"Figure {n_qc} — Final dataset: counts by serotype &amp; host"),
+        ("qc-lengths",f"Figure {n_qc+1} — Final dataset: length distribution"),
+    ]
+
+    qc_section = (
+        card("qc-stats","Table", n_qc, "Final downloaded dataset — sequence statistics",
+             f"Statistics for the downloaded dataset ({FINAL_META}). "
+             "This reflects the actual sequences on disk, not survey estimates. "
+             "All hosts are included here; the human/mosquito subset is used for analysis.",
+             stats_tbl) +
+        card("qc-hosts","Figure", n_qc, "Final dataset — sequence counts by serotype and host",
+             "Breakdown of all downloaded full genomes by serotype and host category. "
+             "Includes all host annotations (not filtered to human/mosquito).",
+             fig_html(fig_qc1,"qc_hosts")) +
+        card("qc-lengths","Figure", n_qc+1, "Final dataset — length distribution",
+             "Length distribution of downloaded sequences (all passing length and coverage filters). "
+             "All sequences are between 10,000 and 12,000 bp by design.",
+             fig_html(fig_qc2,"qc_lengths"))
+    )
+
 toc_html = "\n".join(f'<li><a href="#{a}">{l}</a></li>' for a,l in toc_items)
 
 html = f"""<!DOCTYPE html>
@@ -528,6 +608,7 @@ footer{{text-align:center;padding:24px;color:var(--muted);font-size:.8rem}}
 </div>
 <div class="toc"><h3>Contents</h3><ul>{toc_html}</ul></div>
 {body}
+{qc_section}
 </main>
 <footer>Data: Nextstrain dengue (nextstrain.org) · GenBank · Generated {today}</footer>
 </body>
