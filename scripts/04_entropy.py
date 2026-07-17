@@ -212,8 +212,12 @@ def extract_gene_aa(aln_fasta: Path, pos_map: dict[int, int],
 def shannon_entropy(seqs: list[str]) -> pd.DataFrame:
     """
     Per-site Shannon entropy from a list of equal-length AA strings.
-    Returns: site / entropy / entropy_std / n_seqs / n_informative
+    Returns: site / entropy / entropy_std / entropy_mm / n_seqs / n_informative
       entropy_std = H / log2(20)  — standardised to [0,1], Testa et al. 2026
+      entropy_mm  = Miller-Madow bias-corrected entropy:
+                    H_MM = H_ML + (K_obs - 1) / (2 * N)
+                    where K_obs = number of distinct AAs, N = informative seqs
+                    Corrects for downward bias with small sample sizes.
     """
     if not seqs:
         return pd.DataFrame()
@@ -224,15 +228,19 @@ def shannon_entropy(seqs: list[str]) -> pd.DataFrame:
         informative = [aa for aa in col if aa not in "-X*x"]
         n_inf = len(informative)
         if n_inf < 2:
-            h = h_std = np.nan
+            h = h_std = h_mm = np.nan
         else:
             freqs: dict[str, int] = {}
             for aa in informative:
                 freqs[aa] = freqs.get(aa, 0) + 1
+            k_obs = len(freqs)
             h = round(-sum((c / n_inf) * math.log2(c / n_inf)
                            for c in freqs.values()), 6)
             h_std = round(h / LOG2_20, 6)
+            # Miller-Madow correction: H_MM = H + (K-1)/(2N)
+            h_mm = round(h + (k_obs - 1) / (2 * n_inf), 6)
         rows.append({"site": i + 1, "entropy": h, "entropy_std": h_std,
+                     "entropy_mm": h_mm,
                      "n_seqs": len(col), "n_informative": n_inf})
     return pd.DataFrame(rows)
 

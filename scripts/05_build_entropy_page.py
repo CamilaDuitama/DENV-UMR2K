@@ -8,6 +8,7 @@ Run after 04_entropy.py has completed.
 from datetime import date
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -75,9 +76,11 @@ def fig_summary():
 # ── Figure 2: per-site entropy along the proteome (one panel per serotype) ────
 def fig_per_site_full():
     """
-    2x2 grid (one per serotype). Per-site entropy smoothed with 10-site rolling mean.
-    Human=solid, Mosquito=dashed. Gene boundaries + target region highlighted.
+    Heatmap: rows = serotype+host, columns = 20-site genomic windows,
+    colour = mean entropy. Much clearer than per-site lines for showing
+    which regions of the proteome are variable.
     """
+    WINDOW = 20
     gene_offsets: dict[str, int] = {}
     t_off = 0
     for g in GENE_ORDER:
@@ -89,106 +92,110 @@ def fig_per_site_full():
     df2 = df.copy()
     df2["genome_site"] = df2.apply(
         lambda r: gene_offsets.get(r["gene"], 0) + r["site"], axis=1)
+    df2["window"] = (df2["genome_site"] // WINDOW) * WINDOW
 
-    serotypes = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
-                 if s in df2["serotype"].values]
-    fig = make_subplots(rows=2, cols=2,
-                        subplot_titles=serotypes,
-                        shared_xaxes=True, shared_yaxes=True,
-                        vertical_spacing=0.1, horizontal_spacing=0.05)
+    # Use MM-corrected entropy if available
+    ecol = "entropy_mm" if "entropy_mm" in df2.columns else "entropy"
+    agg = (df2.groupby(["serotype","host","window"])[ecol]
+             .mean().reset_index(name="mean_H"))
+    agg["row"] = agg["serotype"] + " / " + agg["host"]
 
-    WINDOW = 15
-    for idx, sero in enumerate(serotypes):
-        row, col = divmod(idx, 2)
-        row += 1; col += 1
-        for host in ["Human", "Mosquito"]:
-            sub = (df2[(df2["serotype"]==sero) & (df2["host"]==host)]
-                   .sort_values("genome_site"))
-            if sub.empty: continue
-            smooth = sub["entropy"].rolling(WINDOW, center=True, min_periods=1).mean()
-            fig.add_trace(go.Scatter(
-                x=sub["genome_site"], y=smooth,
-                mode="lines", name=host,
-                legendgroup=host, showlegend=(idx == 0),
-                line=dict(color=HOST_COLORS[host],
-                          dash="solid" if host=="Human" else "dot",
-                          width=1.5),
-            ), row=row, col=col)
-        # highlight target genes
-        for g in TARGET_GENES:
-            goff = gene_offsets.get(g, 0)
-            sub_g = df[df["gene"]==g]
-            if sub_g.empty: continue
-            fig.add_vrect(x0=goff, x1=goff+int(sub_g["site"].max()),
-                          fillcolor="yellow", opacity=0.15, line_width=0,
-                          row=row, col=col)
+    rows_order = []
+    for s in ["DENV1","DENV2","DENV3","DENV4"]:
+        for h in ["Human","Mosquito"]:
+            label = f"{s} / {h}"
+            if label in agg["row"].values:
+                rows_order.append(label)
 
-    # gene boundary lines + labels (once, on the figure level)
+    pivot = agg.pivot(index="row", columns="window", values="mean_H")
+    pivot = pivot.reindex(rows_order)
+
+    fig = go.Figure(go.Heatmap(
+        z=pivot.values,
+        x=pivot.columns.tolist(),
+        y=pivot.index.tolist(),
+        colorscale="RdBu_r",
+        zmid=pivot.values[~np.isnan(pivot.values)].mean() if pivot.size else 1.0,
+        colorbar=dict(title="Mean entropy<br>(bits)"),
+        hoverongaps=False,
+    ))
+
+    # Gene labels on x-axis
     for g in GENE_ORDER:
         goff = gene_offsets.get(g, 0)
         sub_g = df[df["gene"]==g]
         if sub_g.empty: continue
         mid = goff + int(sub_g["site"].max()) / 2
-        fig.add_vline(x=goff, line_dash="dot", line_color="#ccc", line_width=0.7)
-        fig.add_annotation(x=mid, y=0, yref="paper", text=g,
-                           showarrow=False, font=dict(size=8),
-                           yanchor="top", xanchor="center")
+        fig.add_vline(x=goff, line_dash="dot", line_color="white", line_width=1)
+        if g in TARGET_GENES:
+            fig.add_vrect(x0=goff, x1=goff+int(sub_g["site"].max()),
+                          fillcolor="yellow", opacity=0.1, line_width=0)
+        fig.add_annotation(x=mid, y=1.01, yref="paper", text=g,
+                           showarrow=False, font=dict(size=9),
+                           xanchor="center", yanchor="bottom")
 
-    fig.update_yaxes(title_text="Entropy (bits)", col=1)
-    fig.update_layout(height=560, legend_title="Host",
-                      margin=dict(t=40, b=50, l=60, r=10))
+    fig.update_layout(height=300,
+                      xaxis_title=f"Genomic position ({WINDOW}-site windows)",
+                      yaxis_title="",
+                      margin=dict(t=40, b=40, l=140, r=20))
     return fig
 
 
 # ── Figure 3: target region zoom (NS4A-2K-NS4B) ───────────────────────────────
 def fig_target_zoom():
     """
-    One column per serotype. Human and mosquito overlaid with colour.
-    X = concatenated position within NS4A-2K-NS4B.
+    Bar chart: mean entropy ± SD per gene in the target region (NS4A-2K-NS4B),
+    split by host. N is shown in the hover. Stars indicate high uncertainty (N<10).
+    Uses Miller-Madow corrected entropy when available.
     """
     target_order = [g for g in GENE_ORDER if g in TARGET_GENES]
     target = df[df["gene"].isin(TARGET_GENES)].copy()
     if target.empty:
         return None
-    t_offsets: dict[str, int] = {}
-    t_off = 0
-    for g in target_order:
-        t_offsets[g] = t_off
-        sub_g = target[target["gene"]==g]
-        if not sub_g.empty:
-            t_off += int(sub_g["site"].max())
-    target["target_site"] = target.apply(
-        lambda r: t_offsets.get(r["gene"], 0) + r["site"], axis=1)
+
+    ecol = "entropy_mm" if "entropy_mm" in target.columns else "entropy"
+    agg = (target.groupby(["serotype","gene","host"])
+           .agg(mean_H=(ecol,"mean"),
+                sd_H=(ecol,"std"),
+                n=("n_informative","median"))
+           .reset_index())
+    agg["gene"] = pd.Categorical(agg["gene"], categories=target_order, ordered=True)
+    agg["label"] = agg["serotype"] + " — N≈" + agg["n"].round(0).astype(int).astype(str)
+    agg["low_n"] = agg["n"] < 10
 
     serotypes = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
-                 if s in target["serotype"].values]
+                 if s in agg["serotype"].values]
     fig = make_subplots(rows=1, cols=len(serotypes),
                         subplot_titles=serotypes,
                         shared_yaxes=True, horizontal_spacing=0.04)
+
     for col, sero in enumerate(serotypes, 1):
-        for host in ["Human", "Mosquito"]:
-            sub = (target[(target["serotype"]==sero) & (target["host"]==host)]
-                   .sort_values("target_site"))
-            if sub.empty: continue
-            fig.add_trace(go.Scatter(
-                x=sub["target_site"], y=sub["entropy"],
-                mode="lines", name=host,
-                legendgroup=host, showlegend=(col==1),
-                line=dict(color=HOST_COLORS[host], width=1.5),
+        sub = agg[agg["serotype"]==sero].sort_values("gene")
+        for host in ["Human","Mosquito"]:
+            h_sub = sub[sub["host"]==host]
+            if h_sub.empty: continue
+            n_vals = h_sub["n"].round(0).astype(int).tolist()
+            labels = [f"N≈{n}" + (" ⚠" if n<10 else "") for n in n_vals]
+            fig.add_trace(go.Bar(
+                x=h_sub["gene"].astype(str).tolist(),
+                y=h_sub["mean_H"].tolist(),
+                error_y=dict(type="data", array=h_sub["sd_H"].tolist(),
+                             visible=True),
+                name=host,
+                legendgroup=host,
+                showlegend=(col==1),
+                marker_color=HOST_COLORS[host],
+                text=labels,
+                textposition="outside",
+                textfont=dict(size=8),
+                hovertemplate=(f"<b>%{{x}}</b><br>{host}<br>"
+                               "Mean H = %{y:.3f} bits<br>"
+                               "%{text}<extra></extra>"),
             ), row=1, col=col)
-        for g in target_order:
-            fig.add_vline(x=t_offsets[g], line_dash="dot",
-                          line_color="#aaa", line_width=1, row=1, col=col)
-    for g in target_order:
-        sub_g = target[target["gene"]==g]
-        if sub_g.empty: continue
-        mid = t_offsets[g] + int(sub_g["site"].max()) / 2
-        fig.add_annotation(x=mid, y=0, yref="paper",
-                           text=f"<b>{g}</b>", showarrow=False,
-                           font=dict(size=10), yanchor="top", xanchor="center")
-    fig.update_yaxes(title_text="Entropy (bits)", col=1)
-    fig.update_layout(height=360, legend_title="Host",
-                      margin=dict(t=40, b=50, l=60, r=10))
+
+    fig.update_yaxes(title_text="Mean entropy (bits, MM-corrected)", col=1)
+    fig.update_layout(height=420, barmode="group", legend_title="Host",
+                      margin=dict(t=50, b=40, l=60, r=10))
     return fig
 
 
@@ -270,15 +277,22 @@ body += card("figure1","Figure",1,"Mean per-gene Shannon entropy by serotype and
     "Higher entropy = more variability at the amino acid level.",
     fig_html(F1,"f1"))
 
-body += card("figure2","Figure",2,"Per-site entropy across the full proteome",
-    "Entropy at every amino acid site, concatenated across all genes in genomic order. "
-    "Solid lines = human, dashed = mosquito. "
-    "Gene boundaries are marked by vertical dashed lines.",
+body += card("figure2","Figure",2,"Entropy heatmap across the full proteome",
+    "Mean entropy per 20-site window across the polyprotein (all serotype × host combinations). "
+    "Redder = more variable; bluer = more conserved. "
+    "Yellow bands highlight the NS4A–2K–NS4B target region. "
+    "Gene boundaries are marked with white dotted lines. "
+    "Miller-Madow bias-corrected entropy is used where available.",
     fig_html(F2,"f2"))
 
 if F3:
-    body += card("figure3","Figure",3,"Target region zoom — NS4A-2K-NS4B",
-        "Per-site entropy across the likely study target region, split by host and serotype.",
+    body += card("figure3","Figure",3,"Mean entropy in the target region (NS4A–2K–NS4B) per serotype",
+        "Bar chart of mean ± SD entropy per gene within the target region, split by host. "
+        "Miller-Madow corrected entropy is used. "
+        "N = approximate median number of informative sequences per site. "
+        "Groups with N &lt; 10 are flagged with ⚠ — their entropy estimates have higher uncertainty "
+        "(small-sample bias is partly corrected by Miller-Madow, but wide error bars indicate "
+        "the mosquito data is limited).",
         fig_html(F3,"f3"))
 
 if F4:
