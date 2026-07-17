@@ -11,6 +11,7 @@ from pathlib import Path
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import plotly.io as pio
 
 ENTROPY_TSV = Path("data/processed/entropy/entropy_per_site.tsv")
@@ -73,91 +74,154 @@ def fig_summary():
 
 # ── Figure 2: per-site entropy along the proteome (one panel per serotype) ────
 def fig_per_site_full():
-    """Concatenate all genes in order and plot entropy vs AA site."""
+    """
+    2x2 grid (one per serotype). Per-site entropy smoothed with 10-site rolling mean.
+    Human=solid, Mosquito=dashed. Gene boundaries + target region highlighted.
+    """
     gene_offsets: dict[str, int] = {}
-    offset = 0
+    t_off = 0
     for g in GENE_ORDER:
-        gene_offsets[g] = offset
-        sub = df[df["gene"] == g]
-        if not sub.empty:
-            offset += sub["site"].max()
+        gene_offsets[g] = t_off
+        sub_g = df[df["gene"] == g]
+        if not sub_g.empty:
+            t_off += int(sub_g["site"].max())
 
     df2 = df.copy()
-    df2["gene"] = pd.Categorical(df2["gene"], categories=GENE_ORDER, ordered=True)
     df2["genome_site"] = df2.apply(
         lambda r: gene_offsets.get(r["gene"], 0) + r["site"], axis=1)
 
-    fig = go.Figure()
-    for sero, color in SERO_COLORS.items():
-        for host, dash in [("Human","solid"),("Mosquito","dot")]:
-            sub = df2[(df2["serotype"]==sero) & (df2["host"]==host)].sort_values("genome_site")
+    serotypes = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
+                 if s in df2["serotype"].values]
+    fig = make_subplots(rows=2, cols=2,
+                        subplot_titles=serotypes,
+                        shared_xaxes=True, shared_yaxes=True,
+                        vertical_spacing=0.1, horizontal_spacing=0.05)
+
+    WINDOW = 15
+    for idx, sero in enumerate(serotypes):
+        row, col = divmod(idx, 2)
+        row += 1; col += 1
+        for host in ["Human", "Mosquito"]:
+            sub = (df2[(df2["serotype"]==sero) & (df2["host"]==host)]
+                   .sort_values("genome_site"))
             if sub.empty: continue
+            smooth = sub["entropy"].rolling(WINDOW, center=True, min_periods=1).mean()
             fig.add_trace(go.Scatter(
-                x=sub["genome_site"], y=sub["entropy"],
-                mode="lines", name=f"{sero} {host}",
-                line=dict(color=color, dash=dash, width=1),
-                opacity=0.8,
-            ))
+                x=sub["genome_site"], y=smooth,
+                mode="lines", name=host,
+                legendgroup=host, showlegend=(idx == 0),
+                line=dict(color=HOST_COLORS[host],
+                          dash="solid" if host=="Human" else "dot",
+                          width=1.5),
+            ), row=row, col=col)
+        # highlight target genes
+        for g in TARGET_GENES:
+            goff = gene_offsets.get(g, 0)
+            sub_g = df[df["gene"]==g]
+            if sub_g.empty: continue
+            fig.add_vrect(x0=goff, x1=goff+int(sub_g["site"].max()),
+                          fillcolor="yellow", opacity=0.15, line_width=0,
+                          row=row, col=col)
 
-    # Gene boundary annotations
-    offset = 0
+    # gene boundary lines + labels (once, on the figure level)
     for g in GENE_ORDER:
-        sub = df[df["gene"]==g]
-        if sub.empty: continue
-        width = sub["site"].max()
-        mid = offset + width / 2
-        fig.add_vline(x=offset, line_dash="dash", line_color="#ccc", line_width=0.8)
-        fig.add_annotation(x=mid, y=-0.05, text=g, showarrow=False,
-                           font=dict(size=10), yref="paper",
-                           xanchor="center")
-        offset += width
+        goff = gene_offsets.get(g, 0)
+        sub_g = df[df["gene"]==g]
+        if sub_g.empty: continue
+        mid = goff + int(sub_g["site"].max()) / 2
+        fig.add_vline(x=goff, line_dash="dot", line_color="#ccc", line_width=0.7)
+        fig.add_annotation(x=mid, y=0, yref="paper", text=g,
+                           showarrow=False, font=dict(size=8),
+                           yanchor="top", xanchor="center")
 
-    fig.update_layout(height=450, xaxis_title="Amino acid position (concatenated proteome)",
-                      yaxis_title="Shannon entropy (bits)",
-                      legend_title="Serotype / Host",
-                      margin=dict(t=20,b=60))
+    fig.update_yaxes(title_text="Entropy (bits)", col=1)
+    fig.update_layout(height=560, legend_title="Host",
+                      margin=dict(t=40, b=50, l=60, r=10))
     return fig
 
 
 # ── Figure 3: target region zoom (NS4A-2K-NS4B) ───────────────────────────────
 def fig_target_zoom():
+    """
+    One column per serotype. Human and mosquito overlaid with colour.
+    X = concatenated position within NS4A-2K-NS4B.
+    """
+    target_order = [g for g in GENE_ORDER if g in TARGET_GENES]
     target = df[df["gene"].isin(TARGET_GENES)].copy()
     if target.empty:
         return None
-    target["gene"] = pd.Categorical(target["gene"],
-                                     categories=[g for g in GENE_ORDER if g in TARGET_GENES],
-                                     ordered=True)
-    fig = px.line(target.sort_values(["serotype","gene","site"]),
-                  x="site", y="entropy", color="serotype",
-                  facet_row="host", facet_col="gene",
-                  color_discrete_map=SERO_COLORS,
-                  labels={"site":"Amino acid position","entropy":"Shannon entropy (bits)",
-                          "serotype":"Serotype"})
-    fig.update_layout(height=500, margin=dict(t=50,b=40))
-    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+    t_offsets: dict[str, int] = {}
+    t_off = 0
+    for g in target_order:
+        t_offsets[g] = t_off
+        sub_g = target[target["gene"]==g]
+        if not sub_g.empty:
+            t_off += int(sub_g["site"].max())
+    target["target_site"] = target.apply(
+        lambda r: t_offsets.get(r["gene"], 0) + r["site"], axis=1)
+
+    serotypes = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
+                 if s in target["serotype"].values]
+    fig = make_subplots(rows=1, cols=len(serotypes),
+                        subplot_titles=serotypes,
+                        shared_yaxes=True, horizontal_spacing=0.04)
+    for col, sero in enumerate(serotypes, 1):
+        for host in ["Human", "Mosquito"]:
+            sub = (target[(target["serotype"]==sero) & (target["host"]==host)]
+                   .sort_values("target_site"))
+            if sub.empty: continue
+            fig.add_trace(go.Scatter(
+                x=sub["target_site"], y=sub["entropy"],
+                mode="lines", name=host,
+                legendgroup=host, showlegend=(col==1),
+                line=dict(color=HOST_COLORS[host], width=1.5),
+            ), row=1, col=col)
+        for g in target_order:
+            fig.add_vline(x=t_offsets[g], line_dash="dot",
+                          line_color="#aaa", line_width=1, row=1, col=col)
+    for g in target_order:
+        sub_g = target[target["gene"]==g]
+        if sub_g.empty: continue
+        mid = t_offsets[g] + int(sub_g["site"].max()) / 2
+        fig.add_annotation(x=mid, y=0, yref="paper",
+                           text=f"<b>{g}</b>", showarrow=False,
+                           font=dict(size=10), yanchor="top", xanchor="center")
+    fig.update_yaxes(title_text="Entropy (bits)", col=1)
+    fig.update_layout(height=360, legend_title="Host",
+                      margin=dict(t=40, b=50, l=60, r=10))
     return fig
 
 
 # ── Figure 4: human vs mosquito entropy scatter ───────────────────────────────
 def fig_hm_scatter():
-    pivot = (df.groupby(["serotype","gene","site","host"])["entropy"]
-               .mean().unstack("host").reset_index())
-    if "Human" not in pivot.columns or "Mosquito" not in pivot.columns:
+    """
+    Mean entropy per gene: human vs mosquito. One point per serotype per gene.
+    Stars = target genes (NS4A, 2K, NS4B). Gene labels shown next to points.
+    """
+    gene_means = (df.groupby(["serotype","gene","host"])["entropy"]
+                  .mean().unstack("host").reset_index())
+    if "Human" not in gene_means.columns or "Mosquito" not in gene_means.columns:
         return None
-    pivot = pivot.dropna(subset=["Human","Mosquito"])
-    pivot["target"] = pivot["gene"].isin(TARGET_GENES)
-    fig = px.scatter(pivot, x="Human", y="Mosquito", color="serotype",
-                     symbol="target",
+    gene_means = gene_means.dropna(subset=["Human","Mosquito"])
+    gene_means["target"] = gene_means["gene"].isin(TARGET_GENES)
+    fig = px.scatter(gene_means,
+                     x="Human", y="Mosquito",
+                     color="serotype", symbol="target",
+                     text="gene",
                      color_discrete_map=SERO_COLORS,
-                     facet_col="gene",
-                     labels={"Human":"Entropy in humans (bits)",
-                             "Mosquito":"Entropy in mosquitoes (bits)"},
-                     opacity=0.5,
-                     category_orders={"gene":GENE_ORDER})
-    fig.add_shape(type="line", x0=0, y0=0, x1=4, y1=4,
-                  line=dict(dash="dash", color="grey"))
-    fig.update_layout(height=400, margin=dict(t=50,b=40))
-    fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
+                     symbol_map={True:"star", False:"circle"},
+                     labels={"Human":"Mean entropy — humans (bits)",
+                             "Mosquito":"Mean entropy — mosquitoes (bits)",
+                             "serotype":"Serotype",
+                             "target":"Target gene"},
+                     hover_data={"gene":True,"Human":":.3f","Mosquito":":.3f",
+                                 "serotype":True})
+    fig.update_traces(textposition="top center", textfont_size=9, marker_size=10)
+    vmax = max(gene_means["Human"].max(), gene_means["Mosquito"].max()) * 1.05
+    fig.add_shape(type="line", x0=0, y0=0, x1=vmax, y1=vmax,
+                  line=dict(dash="dash", color="grey", width=1))
+    fig.update_layout(height=520, legend_title="Serotype / Target",
+                      margin=dict(t=20,b=40))
     return fig
 
 
