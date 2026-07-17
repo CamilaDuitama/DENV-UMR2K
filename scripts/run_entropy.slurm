@@ -22,6 +22,7 @@ module load fasta
 module load ruby
 module load mafft/7.526
 module load cd-hit/4.8.1
+module load primer3/2.4.0
 module load EMBOSS/6.6.0
 module load SeqKit/2.8.2
 
