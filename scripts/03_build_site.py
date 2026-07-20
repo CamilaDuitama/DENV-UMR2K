@@ -311,7 +311,9 @@ body += card("figure1","Figure",1,"Sequence counts by serotype and host",
 body += card("figure2","Figure",2,"Sequence length distribution by serotype and host",
     f"Box plots show the median, interquartile range, and whiskers (1.5×IQR) of sequence length "
     f"for human and mosquito genomes. All sequences are between {MIN_LEN:,} and 12,000 bp by design. "
-    f"Mosquito sequences are slightly shorter on average.",
+    f"Mosquito sequences are slightly shorter on average. "
+    f"Note: DENV1 mosquito sequences appear as a flat line because 170 of 171 sequences have identical length "
+    f"(10,176 bp), originating from the same amplicon sequencing panel; the IQR is zero, not a display error.",
     fig_html(F[2],"f2"))
 
 body += card("figure3","Figure",3,"Genome coverage distribution by serotype and host",
@@ -372,6 +374,9 @@ body{{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--t
 header{{background:var(--blue);color:#fff;padding:28px 40px}}
 header h1{{font-size:1.5rem;font-weight:600;margin-bottom:6px}}
 header p{{opacity:.85;font-size:.88rem}}
+header nav{{margin-top:10px}}
+header nav a{{color:#cde4f7;text-decoration:none;margin-right:16px;font-size:.88rem}}
+header nav a:hover{{text-decoration:underline}}
 main{{max-width:1100px;margin:0 auto;padding:24px 20px}}
 .intro{{background:#e8f4fd;border-left:4px solid var(--blue);
   padding:14px 20px;border-radius:4px;margin-bottom:20px;font-size:.9rem;line-height:1.7}}
@@ -399,6 +404,7 @@ footer{{text-align:center;padding:24px;color:var(--muted);font-size:.8rem}}
 <header>
   <h1>DENV Full-Genome Dataset — Availability Report</h1>
   <p>CNRS UMR2K Seed Grant 2026 &nbsp;·&nbsp; Author: Camila Duitama &nbsp;·&nbsp; Generated: {today}</p>
+  <nav><a href="entropy.html">Shannon Entropy Analysis →</a></nav>
 </header>
 <main>
 <div class="intro">

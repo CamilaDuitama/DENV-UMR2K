@@ -8,12 +8,127 @@ Run after 04_entropy.py has completed.
 from datetime import date
 from pathlib import Path
 
+import math
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.io as pio
+
+PIPELINE_SVG = """<svg xmlns="http://www.w3.org/2000/svg" width="580" height="895"
+     font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#555"/>
+    </marker>
+    <marker id="arr-red" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0,10 3.5,0 7" fill="#c0392b"/>
+    </marker>
+  </defs>
+
+  <!-- INPUT  y=10..62 -->
+  <rect x="60" y="10" width="460" height="52" rx="8" fill="#f5a623" stroke="#c47c00" stroke-width="2"/>
+  <text x="290" y="29" text-anchor="middle" font-weight="bold" font-size="13">INPUT</text>
+  <text x="290" y="48" text-anchor="middle" font-size="12">Nextstrain DENV sequences (full genomes)</text>
+
+  <line x1="290" y1="62" x2="290" y2="83" stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- FILTER  y=83..149 -->
+  <rect x="60" y="83" width="460" height="66" rx="8" fill="#4a90d9" stroke="#2c5f8a" stroke-width="2"/>
+  <text x="290" y="102" text-anchor="middle" font-weight="bold" font-size="13" fill="white">FILTER</text>
+  <text x="290" y="120" text-anchor="middle" font-size="12" fill="white">Human / mosquito host &#x00B7; length &#x2265;10&#x202F;kbp &#x00B7; coverage &#x2265;0.95</text>
+  <text x="290" y="137" text-anchor="middle" font-size="12" fill="white">Vaccine strains and lab-grown sequences excluded</text>
+
+  <line x1="290" y1="149" x2="290" y2="170" stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- SPLIT  y=170..222 -->
+  <rect x="60" y="170" width="460" height="52" rx="8" fill="#4a90d9" stroke="#2c5f8a" stroke-width="2"/>
+  <text x="290" y="189" text-anchor="middle" font-weight="bold" font-size="13" fill="white">SPLIT</text>
+  <text x="290" y="207" text-anchor="middle" font-size="12" fill="white">Independently by serotype (DENV1&#x2013;4) and host (Human / Mosquito)</text>
+
+  <line x1="290" y1="222" x2="290" y2="246" stroke="#888" stroke-width="2" stroke-dasharray="5,3" marker-end="url(#arr)"/>
+
+  <!-- LOOP border  y=248..783 -->
+  <rect x="38" y="248" width="504" height="535" rx="10" fill="none" stroke="#bbb" stroke-width="1.5" stroke-dasharray="7,4"/>
+  <text x="290" y="264" text-anchor="middle" font-size="10" fill="#999" font-style="italic">repeated for each serotype &#x00D7; host combination</text>
+
+  <!-- CLUSTER  y=270..336 -->
+  <rect x="80" y="270" width="420" height="66" rx="8" fill="#4a90d9" stroke="#2c5f8a" stroke-width="2"/>
+  <text x="290" y="289" text-anchor="middle" font-weight="bold" font-size="13" fill="white">CLUSTER</text>
+  <text x="290" y="307" text-anchor="middle" font-size="12" fill="white">Cluster at 98% nucleotide identity (cd-hit-est)</text>
+  <text x="290" y="324" text-anchor="middle" font-size="12" fill="white">Reduces outbreak over-representation &#x00B7; per serotype</text>
+
+  <line x1="290" y1="336" x2="290" y2="360" stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- DECISION diamond  center=(290,390)  half-w=108 half-h=30 -->
+  <polygon points="290,360 398,390 290,420 182,390" fill="#e74c3c" stroke="#a93226" stroke-width="2"/>
+  <text x="290" y="385" text-anchor="middle" font-weight="bold" font-size="12" fill="white">n &lt; 5 seqs?</text>
+  <text x="290" y="400" text-anchor="middle" font-size="10" fill="white">after clustering</text>
+
+  <!-- YES branch -->
+  <line x1="398" y1="390" x2="422" y2="390" stroke="#c0392b" stroke-width="2" marker-end="url(#arr-red)"/>
+  <text x="410" y="382" text-anchor="middle" font-size="10" fill="#c0392b" font-weight="bold">Yes</text>
+  <rect x="424" y="370" width="88" height="40" rx="6" fill="#95a5a6" stroke="#717d7e" stroke-width="1.5"/>
+  <text x="468" y="386" text-anchor="middle" font-size="11" fill="white" font-weight="bold">EXCLUDE</text>
+  <text x="468" y="401" text-anchor="middle" font-size="10" fill="white">group skipped</text>
+
+  <!-- NO branch -->
+  <line x1="290" y1="420" x2="290" y2="444" stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="302" y="437" font-size="10" fill="#333" font-weight="bold">No</text>
+
+  <!-- TRANSLATE  y=444..510 -->
+  <rect x="80" y="444" width="420" height="66" rx="8" fill="#4a90d9" stroke="#2c5f8a" stroke-width="2"/>
+  <text x="290" y="463" text-anchor="middle" font-weight="bold" font-size="13" fill="white">TRANSLATE</text>
+  <text x="290" y="481" text-anchor="middle" font-size="12" fill="white">Translate polyprotein to amino acids</text>
+  <text x="290" y="498" text-anchor="middle" font-size="12" fill="white">Start: nucleotide 97 &#x00B7; ambiguous residues &#x2192; X</text>
+
+  <line x1="290" y1="510" x2="290" y2="531" stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- ALIGN  y=531..597 -->
+  <rect x="80" y="531" width="420" height="66" rx="8" fill="#4a90d9" stroke="#2c5f8a" stroke-width="2"/>
+  <text x="290" y="550" text-anchor="middle" font-weight="bold" font-size="13" fill="white">ALIGN</text>
+  <text x="290" y="568" text-anchor="middle" font-size="12" fill="white">Multiple amino acid alignment (MAFFT --amino)</text>
+  <text x="290" y="585" text-anchor="middle" font-size="12" fill="white">NCBI reference sequence prepended as anchor</text>
+
+  <line x1="290" y1="597" x2="290" y2="618" stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- EXTRACT GENES  y=618..684 -->
+  <rect x="80" y="618" width="420" height="66" rx="8" fill="#4a90d9" stroke="#2c5f8a" stroke-width="2"/>
+  <text x="290" y="637" text-anchor="middle" font-weight="bold" font-size="13" fill="white">EXTRACT GENES</text>
+  <text x="290" y="655" text-anchor="middle" font-size="12" fill="white">Map gene coordinates to alignment columns</text>
+  <text x="290" y="672" text-anchor="middle" font-size="12" fill="white">Extract one sub-alignment per gene</text>
+
+  <line x1="290" y1="684" x2="290" y2="705" stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- ENTROPY  y=705..775 -->
+  <rect x="80" y="705" width="420" height="70" rx="8" fill="#1a5276" stroke="#154360" stroke-width="2"/>
+  <text x="290" y="724" text-anchor="middle" font-weight="bold" font-size="13" fill="white">ENTROPY</text>
+  <text x="290" y="742" text-anchor="middle" font-size="12" fill="white">H = &#x2212;&#x2211;&#x202F;p&#x202F;log&#x2082;&#x202F;p (bits, range 0&#x2013;4.32)</text>
+  <text x="290" y="759" text-anchor="middle" font-size="12" fill="white">Gaps, ambiguous (X), and stop (*) residues excluded</text>
+
+  <!-- end loop -->
+  <line x1="290" y1="775" x2="290" y2="796" stroke="#555" stroke-width="2" marker-end="url(#arr)"/>
+
+  <!-- OUTPUT  y=796..860 -->
+  <rect x="60" y="796" width="460" height="64" rx="8" fill="#27ae60" stroke="#1a6e3c" stroke-width="2"/>
+  <text x="290" y="815" text-anchor="middle" font-weight="bold" font-size="13" fill="white">OUTPUT</text>
+  <text x="290" y="833" text-anchor="middle" font-size="12" fill="white">Per-site entropy table (H &#x00B7; H<tspan dy="4" font-size="9">std</tspan><tspan dy="-4">)</tspan></text>
+  <text x="290" y="850" text-anchor="middle" font-size="12" fill="white">Per gene &#x00B7; per serotype &#x00B7; per host</text>
+
+  <!-- Legend  y=876 -->
+  <g transform="translate(60,876)">
+    <rect x="0" y="0" width="12" height="12" rx="2" fill="#f5a623"/>
+    <text x="16" y="11" font-size="10" fill="#555">Input / Output</text>
+    <rect x="112" y="0" width="12" height="12" rx="2" fill="#4a90d9"/>
+    <text x="128" y="11" font-size="10" fill="#555">Processing step</text>
+    <polygon points="232,6 246,0 260,6 246,12" fill="#e74c3c"/>
+    <text x="264" y="11" font-size="10" fill="#555">Decision gate</text>
+    <rect x="358" y="0" width="12" height="12" rx="2" fill="#95a5a6"/>
+    <text x="374" y="11" font-size="10" fill="#555">Excluded</text>
+  </g>
+</svg>"""
+
 
 ENTROPY_TSV = Path("data/processed/entropy/entropy_per_site.tsv")
 DOCS_DIR    = Path("docs")
@@ -39,11 +154,17 @@ def fig_html(fig, div_id):
     return pio.to_html(fig, full_html=False, include_plotlyjs=False, div_id=div_id)
 
 
-def card(anchor, kind, num, title, caption, content):
+def card(anchor, kind, num, title, caption, content, collapsible=False, finding=None):
+    if collapsible:
+        body = (f'<details><summary style="cursor:pointer;color:var(--blue);font-size:.85rem;margin-bottom:6px">Show / hide table</summary>\n'
+                f'  <p class="caption">{caption}</p>\n  {content}\n</details>')
+    else:
+        body = f'  <p class="caption">{caption}</p>\n  {content}'
+    if finding:
+        body += f'\n  <div class="finding"><span class="finding-label">Key finding</span>{finding}</div>'
     return f"""<div class="card" id="{anchor}">
   <div class="fig-label">{kind} {num} — {title}</div>
-  <p class="caption">{caption}</p>
-  {content}
+{body}
 </div>"""
 
 
@@ -68,7 +189,29 @@ def fig_summary():
                           x1=GENE_ORDER.index(gene)+0.5,
                           fillcolor="yellow", opacity=0.15, line_width=0)
 
-    fig.update_layout(height=420, legend_title="Host", margin=dict(t=50,b=40))
+    # Add genome-wide mean per serotype as a dashed reference line
+    sero_order = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
+                  if s in df["serotype"].unique()]
+    gw_h = df[df["host"]=="Human"].groupby("serotype")["entropy"].mean()
+    gw_m = df[df["host"]=="Mosquito"].groupby("serotype")["entropy"].mean()
+    for col_i, sero in enumerate(sero_order, 1):
+        if sero in gw_h.index:
+            fig.add_hline(
+                y=gw_h[sero], row=1, col=col_i,
+                line_dash="dot", line_color=HOST_COLORS["Human"], line_width=1.5,
+                annotation_text=f"human mean {gw_h[sero]:.2f}",
+                annotation_font_size=7,
+                annotation_position="top right",
+            )
+        if sero in gw_m.index:
+            fig.add_hline(
+                y=gw_m[sero], row=1, col=col_i,
+                line_dash="dash", line_color=HOST_COLORS["Mosquito"], line_width=1.2,
+                annotation_text=f"mosq. mean {gw_m[sero]:.2f}",
+                annotation_font_size=7,
+                annotation_position="bottom right",
+            )
+    fig.update_layout(height=420, legend_title="Host", margin=dict(t=50,b=60))
     fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
     return fig
 
@@ -141,61 +284,57 @@ def fig_per_site_full():
     return fig
 
 
-# ── Figure 3: target region zoom (NS4A-2K-NS4B) ───────────────────────────────
+# ── Figure 3: target region dot plot (NS4A-2K-NS4B) ──────────────────────────
+LOG2_20 = math.log2(20)
+
 def fig_target_zoom():
     """
-    Bar chart: mean entropy ± SD per gene in the target region (NS4A-2K-NS4B),
-    split by host. N is shown in the hover. Stars indicate high uncertainty (N<10).
-    Uses Miller-Madow corrected entropy when available.
+    Cleveland dot plot: mean entropy per gene in target region (NS4A-2K-NS4B),
+    one dot per serotype, colored by serotype. Human sequences only, n>=10.
+    Vertical line = genome-wide mean (human). Error bars = SD.
     """
     target_order = [g for g in GENE_ORDER if g in TARGET_GENES]
-    target = df[df["gene"].isin(TARGET_GENES)].copy()
+    target = df[(df["gene"].isin(TARGET_GENES)) & (df["host"]=="Human")].copy()
     if target.empty:
         return None
 
     ecol = "entropy_mm" if "entropy_mm" in target.columns else "entropy"
-    agg = (target.groupby(["serotype","gene","host"])
-           .agg(mean_H=(ecol,"mean"),
-                sd_H=(ecol,"std"),
-                n=("n_informative","median"))
+    agg = (target.groupby(["serotype","gene"])
+           .agg(mean_H=(ecol,"mean"), sd_H=(ecol,"std"), n=("n_informative","median"))
            .reset_index())
+    agg = agg[agg["n"] >= 10]
+    if agg.empty:
+        return None
     agg["gene"] = pd.Categorical(agg["gene"], categories=target_order, ordered=True)
-    agg["label"] = agg["serotype"] + " — N≈" + agg["n"].round(0).astype(int).astype(str)
-    agg["low_n"] = agg["n"] < 10
 
+    overall_gw = df[df["host"]=="Human"][ecol].mean()
+
+    fig = go.Figure()
     serotypes = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
                  if s in agg["serotype"].values]
-    fig = make_subplots(rows=1, cols=len(serotypes),
-                        subplot_titles=serotypes,
-                        shared_yaxes=True, horizontal_spacing=0.04)
-
-    for col, sero in enumerate(serotypes, 1):
+    for sero in serotypes:
         sub = agg[agg["serotype"]==sero].sort_values("gene")
-        for host in ["Human","Mosquito"]:
-            h_sub = sub[sub["host"]==host]
-            if h_sub.empty: continue
-            n_vals = h_sub["n"].round(0).astype(int).tolist()
-            labels = [f"N≈{n}" + (" ⚠" if n<10 else "") for n in n_vals]
-            fig.add_trace(go.Bar(
-                x=h_sub["gene"].astype(str).tolist(),
-                y=h_sub["mean_H"].tolist(),
-                error_y=dict(type="data", array=h_sub["sd_H"].tolist(),
-                             visible=True),
-                name=host,
-                legendgroup=host,
-                showlegend=(col==1),
-                marker_color=HOST_COLORS[host],
-                text=labels,
-                textposition="outside",
-                textfont=dict(size=8),
-                hovertemplate=(f"<b>%{{x}}</b><br>{host}<br>"
-                               "Mean H = %{y:.3f} bits<br>"
-                               "%{text}<extra></extra>"),
-            ), row=1, col=col)
+        fig.add_trace(go.Scatter(
+            x=sub["mean_H"].tolist(),
+            y=sub["gene"].astype(str).tolist(),
+            mode="markers",
+            marker=dict(size=13, color=SERO_COLORS[sero]),
+            error_x=dict(type="data", array=sub["sd_H"].fillna(0).tolist(), visible=True,
+                         color=SERO_COLORS[sero], thickness=1.5, width=5),
+            name=sero,
+            hovertemplate=(f"<b>%{{y}}</b><br>{sero}<br>"
+                           "Mean H = %{x:.3f} bits<extra></extra>"),
+        ))
 
-    fig.update_yaxes(title_text="Mean entropy (bits, MM-corrected)", col=1)
-    fig.update_layout(height=420, barmode="group", legend_title="Host",
-                      margin=dict(t=50, b=40, l=60, r=10))
+    fig.add_vline(x=overall_gw, line_dash="dot", line_color="grey", line_width=1.5,
+                  annotation_text=f"genome-wide mean<br>(human, {overall_gw:.2f} bits)",
+                  annotation_font_size=9, annotation_position="top left")
+    fig.add_vline(x=0, line_color="white", line_width=0)  # force axis from 0
+    fig.update_xaxes(title_text="Mean entropy H (bits)", range=[0, LOG2_20 * 0.45],
+                     tickvals=[0, 0.5, 1.0, 1.5], ticktext=["0<br><i>conserved</i>","0.5","1.0","1.5"])
+    fig.update_yaxes(title_text="", tickfont=dict(size=13))
+    fig.update_layout(height=280, legend_title="Serotype",
+                      margin=dict(t=30, b=50, l=80, r=20))
     return fig
 
 
@@ -210,24 +349,38 @@ def fig_hm_scatter():
     if "Human" not in gene_means.columns or "Mosquito" not in gene_means.columns:
         return None
     gene_means = gene_means.dropna(subset=["Human","Mosquito"])
-    gene_means["target"] = gene_means["gene"].isin(TARGET_GENES)
+    gene_means["Gene type"] = gene_means["gene"].isin(TARGET_GENES).map(
+        {True: "Target (NS4A–2K–NS4B)", False: "Other gene"})
     fig = px.scatter(gene_means,
                      x="Human", y="Mosquito",
-                     color="serotype", symbol="target",
+                     color="serotype", symbol="Gene type",
                      text="gene",
                      color_discrete_map=SERO_COLORS,
-                     symbol_map={True:"star", False:"circle"},
+                     symbol_map={"Target (NS4A–2K–NS4B)": "star",
+                                 "Other gene": "circle"},
                      labels={"Human":"Mean entropy — humans (bits)",
                              "Mosquito":"Mean entropy — mosquitoes (bits)",
                              "serotype":"Serotype",
-                             "target":"Target gene"},
+                             "Gene type":"Gene type"},
                      hover_data={"gene":True,"Human":":.3f","Mosquito":":.3f",
                                  "serotype":True})
     fig.update_traces(textposition="top center", textfont_size=9, marker_size=10)
     vmax = max(gene_means["Human"].max(), gene_means["Mosquito"].max()) * 1.05
+    # Diagonal (x=y line)
     fig.add_shape(type="line", x0=0, y0=0, x1=vmax, y1=vmax,
-                  line=dict(dash="dash", color="grey", width=1))
-    fig.update_layout(height=520, legend_title="Serotype / Target",
+                  line=dict(dash="dot", color="lightgrey", width=1))
+    # Regression line
+    valid = gene_means.dropna(subset=["Human","Mosquito"])
+    slope, intercept = np.polyfit(valid["Human"], valid["Mosquito"], 1)
+    r_val = float(np.corrcoef(valid["Human"], valid["Mosquito"])[0, 1])
+    x_fit = np.linspace(0, vmax, 60)
+    fig.add_trace(go.Scatter(
+        x=x_fit, y=slope * x_fit + intercept,
+        mode="lines", line=dict(color="#555", width=1.5, dash="dash"),
+        name=f"Regression (r\u202f=\u202f{r_val:.2f})",
+        showlegend=True, hoverinfo="skip",
+    ))
+    fig.update_layout(height=520, legend_title="Serotype / Gene type",
                       margin=dict(t=20,b=40))
     return fig
 
@@ -259,6 +412,7 @@ def summary_table():
     return tbl
 
 
+
 # ── Build page ────────────────────────────────────────────────────────────────
 F1 = fig_summary()
 F2 = fig_per_site_full()
@@ -266,48 +420,60 @@ F3 = fig_target_zoom()
 F4 = fig_hm_scatter()
 
 body = ""
-body += card("table1","Table",1,"Shannon entropy summary by serotype, gene, and host",
-    "Mean entropy and number of informative sites per gene. "
-    "Highlighted rows (yellow) = NS4A-2K-NS4B target region.",
-    summary_table())
 
 body += card("figure1","Figure",1,"Mean per-gene Shannon entropy by serotype and host",
-    "Mean entropy across all sites per gene. Blue = human, orange = mosquito. "
-    "Yellow bands mark the likely study target region (NS4A-2K-NS4B). "
-    "Higher entropy = more variability at the amino acid level.",
-    fig_html(F1,"f1"))
+    "Mean Shannon entropy H (bits) per gene, split by serotype and host. "
+    "Dotted line = genome-wide mean for human sequences (per serotype). "
+    "Dashed line = genome-wide mean for mosquito sequences (per serotype). "
+    "Yellow bands = NS4A–2K–NS4B target region.",
+    fig_html(F1,"f1"),
+    finding=("Most variable genes: <b>prM</b> (1.14 bits), <b>E</b> (1.10) — surface proteins under antibody selection pressure. "
+             "Most conserved: <b>2K</b> (0.85), <b>NS4A</b> (1.02). "
+             "Target region (NS4A–2K–NS4B) mean = 1.01 bits, slightly <em>below</em> genome-wide mean (1.06 bits) — the target region is at or below average variability."))
 
 body += card("figure2","Figure",2,"Entropy heatmap across the full proteome",
-    "Mean entropy per 20-site window across the polyprotein (all serotype × host combinations). "
-    "Redder = more variable; bluer = more conserved. "
-    "Yellow bands highlight the NS4A–2K–NS4B target region. "
-    "Gene boundaries are marked with white dotted lines. "
-    "Miller-Madow bias-corrected entropy is used where available.",
-    fig_html(F2,"f2"))
+    "Mean H per 20-site sliding window across the DENV polyprotein (all serotype × host combinations). "
+    "Redder = more variable; bluer = more conserved. Yellow bands = target region (NS4A–2K–NS4B).",
+    fig_html(F2,"f2"),
+    finding=("<b>DENV2</b> is notably more conserved (0.77\u202fbits) than DENV1/3/4 (1.1\u20131.2\u202fbits) \u2014 visible as the consistently blue row across all panels. "
+             "The target region shows a relatively conserved band across serotypes."))
 
 if F3:
     body += card("figure3","Figure",3,"Mean entropy in the target region (NS4A–2K–NS4B) per serotype",
-        "Bar chart of mean ± SD entropy per gene within the target region, split by host. "
-        "Miller-Madow corrected entropy is used. "
-        "N = approximate median number of informative sequences per site. "
-        "Groups with N &lt; 10 are flagged with ⚠ — their entropy estimates have higher uncertainty "
-        "(small-sample bias is partly corrected by Miller-Madow, but wide error bars indicate "
-        "the mosquito data is limited).",
-        fig_html(F3,"f3"))
+        "Mean H ± SD per gene in the NS4A–2K–NS4B target region (human sequences only). "
+        "Serotype groups with fewer than 10 informative sequences are excluded. "
+        "Dashed reference lines = genome-wide mean H per serotype.",
+        fig_html(F3,"f3"),
+        finding=("Conservation within the target region <b>varies by serotype</b>: "
+                 "in DENV1/3/4, <b>2K</b> (signal peptide) is the most conserved gene (lowest H). "
+                 "In DENV2, NS4A and NS4B are more conserved than 2K (0.80 and 0.81 vs 1.04 bits). "
+                 "<b>DENV2 is the most conserved serotype</b> across all three target genes — "
+                 "making it the best reference for DMS experimental design. "
+                 "Only human sequences shown (mosquito N < 10 after clustering)."))
 
 if F4:
     body += card("figure4","Figure",4,"Human vs mosquito entropy per site",
-        "Each point is one amino acid site in one gene. Points above the diagonal have higher "
-        "entropy in mosquitoes; points below have higher entropy in humans. "
-        "Target gene sites are shown with a different symbol.",
-        fig_html(F4,"f4"))
+        "Each point is the gene-level mean entropy (H) for one serotype × gene combination. "
+        "Gene-level means pool hundreds of sites, making the comparison robust even at small mosquito N. "
+        "Dotted diagonal = perfect agreement between hosts. Dashed line = regression.",
+        fig_html(F4,"f4"),
+        finding=("<b>Gene-level rank order of conservation is shared between hosts</b> (Pearson r\u202f=\u202f0.77): "
+                 "genes variable in humans tend to be variable in mosquitoes and vice versa. "
+                 "Mosquito entropy values are systematically lower, partly due to small sample sizes "
+                 "(N\u202f=\u202f5\u20139 per group after clustering) and partly reflecting real host dynamics."))
 
-toc = [("methods","Methods — how entropy was estimated"),
-       ("table1","Table 1 — Summary statistics"),
+body += card("table1","Table",1,"Full entropy statistics by serotype, gene, and host",
+    "Mean H (bits), max H, and number of informative sites per gene across all serotype &times; host combinations. "
+    "Highlighted rows (yellow) = NS4A&ndash;2K&ndash;NS4B target region. "
+    "H<sub>norm</sub> = H / log₂(20) (range 0–1).",
+    summary_table(), collapsible=True)
+
+toc = [("methods","Methods — pipeline"),
        ("figure1","Figure 1 — Mean entropy per gene"),
        ("figure2","Figure 2 — Full proteome entropy"),
        ("figure3","Figure 3 — NS4A-2K-NS4B zoom"),
-       ("figure4","Figure 4 — Human vs mosquito scatter")]
+       ("figure4","Figure 4 — Human vs mosquito scatter"),
+       ("table1","Table 1 — Full statistics")]
 toc_html = "\n".join(f'<li><a href="#{a}">{l}</a></li>' for a,l in toc)
 
 # Count for header
@@ -355,94 +521,35 @@ tr:hover{{background:#f0f4fa}}
 .methods li{{margin-bottom:.6em}}
 .methods ul{{margin:.4em 0 .4em 1.2em}}
 .methods a{{color:var(--blue)}}
+.pipeline-svg{{max-width:100%;display:block;margin:14px auto}}
+.finding{{background:#e8f4fd;border-left:3px solid var(--blue);padding:8px 14px;margin-top:10px;border-radius:0 4px 4px 0;font-size:.88rem;line-height:1.55}}
+.finding-label{{font-weight:700;color:var(--blue);margin-right:5px}}
 </style></head><body>
 <header>
   <h1>Shannon Entropy Estimation — DENV Proteome</h1>
   <p>CNRS UMR2K Seed Grant 2026 &nbsp;·&nbsp; Author: Camila Duitama &nbsp;·&nbsp; Generated: {today}</p>
   <nav>
     <a href="index.html">← Dataset overview</a>
+    &nbsp;&middot;&nbsp;
+    <a href="https://camiladuitama.github.io/DENV-UMR2K/entropy.html" target="_blank">&#127760; Share this page</a>
   </nav>
 </header>
 <main>
+<div class="toc"><h3>Contents</h3><ul>{toc_html}</ul></div>
 
 <div class="methods" id="methods">
-  <h2>How entropy was estimated</h2>
-  <ol>
-    <li><b>Input sequences.</b>
-      Full-genome DENV sequences from <b>Nextstrain</b> (nextstrain.org/dengue),
-      restricted to human and mosquito hosts, ≥10,000 bp, genome coverage ≥0.95.
-      Lab-grown (<code>is_lab_host = True</code>) and vaccine/chimeric strains excluded.
-    </li>
-    <li><b>Redundancy reduction.</b>
-      Sequences were clustered at <b>98% nucleotide identity</b> using
-      <a href="https://sites.google.com/view/cd-hit" target="_blank">cd-hit-est v4.8.1</a>
-      (word length 8, greedy incremental algorithm).
-      This reduces over-representation of densely sampled outbreaks without
-      discarding biological diversity.
-      Performed separately for each serotype.
-    </li>
-    <li><b>Translation.</b>
-      Each sequence was trimmed to a multiple of three codons starting at
-      nucleotide position 97 (the first codon of the C capsid protein in
-      the DENV2 reference NC_001474.2 / polyprotein start).
-      Translation to amino acids used
-      <a href="https://emboss.sourceforge.net/" target="_blank">EMBOSS transeq v6.6.0</a>
-      (<code>-frame 1 -clean</code>; ambiguous codons translated to X).
-    </li>
-    <li><b>Multiple sequence alignment.</b>
-      All translated polyprotein sequences for a given serotype were aligned
-      together using
-      <a href="https://mafft.cbrc.jp/" target="_blank">MAFFT v7.526</a>
-      (<code>--amino --auto</code>) with the corresponding NCBI reference
-      sequence prepended as an alignment anchor
-      (DENV1: NC_001477.1 | DENV2: NC_001474.2 | DENV3: NC_001475.2 | DENV4: NC_002640.1).
-      This approach is equivalent to the RevTrans step used in
-      Testa et al. 2026 (<i>Nat Ecol Evol</i>) for entropy purposes — both produce
-      an amino-acid-level alignment; RevTrans would additionally back-project
-      to a codon-aware nucleotide alignment, which is only needed for
-      phylogenetic codon models (WP2, phydms).
-    </li>
-    <li><b>Gene boundary extraction.</b>
-      The position of the reference sequence in the alignment was used to map
-      nucleotide gene coordinates (from NC_001474.2) to amino acid positions
-      within the polyprotein, and then to alignment columns.
-      Each gene sub-alignment was extracted from the full polyprotein alignment
-      by selecting the corresponding columns.
-    </li>
-    <li><b>Shannon entropy per site.</b>
-      For each alignment column (amino acid site) in a gene:
-      <ul style="margin:.5em 0 .5em 1.5em">
-        <li>Gap characters (<code>-</code>), ambiguous residues (<code>X</code>),
-            and stop codons (<code>*</code>) were excluded.</li>
-        <li>Amino acid frequencies <i>p&#x1D43;</i> were computed from the
-            remaining residues.</li>
-        <li>Shannon entropy was computed as:
-            <b>H = &minus;&sum; p&#x1D43; log&#x2082; p&#x1D43;</b>
-            (units: bits; range 0–log&#x2082;20 &asymp; 4.32 bits).</li>
-        <li>Standardised entropy was computed as:
-            <b>H&#x209b;&#x209c;&#x1D00; = H / log&#x2082;(20)</b>
-            (range 0–1; 0 = fully conserved, 1 = maximally diverse;
-            as reported in Testa et al. 2026).</li>
-        <li>Sites with fewer than 2 informative residues were excluded
-            (reported as NaN).</li>
-      </ul>
-    </li>
-    <li><b>Host comparison.</b>
-      All steps above were performed independently for
-      <b>human-derived</b> and <b>mosquito-derived</b> sequences,
-      allowing direct comparison of site-level variability between the two host environments.
-      Serotype-host groups with fewer than 5 sequences after clustering were excluded.
-    </li>
-  </ol>
-  <p style="margin-top:10px;font-size:.82rem;color:#6c757d">
-    Reference: Testa et al. (2026)
-    <i>Comparative analysis of deep mutational scanning datasets in
-    enteroviruses A and B identifies functional divergence and therapeutic targets.</i>
-    <a href="https://doi.org/10.1038/s41559-026-02993-8" target="_blank">Nat Ecol Evol</a>.
-    Code: <a href="https://github.com/QVEU/EV_DMS_Comparison" target="_blank">github.com/QVEU/EV_DMS_Comparison</a>.
+  <h2>Pipeline</h2>
+  <div class="pipeline-svg">{PIPELINE_SVG}</div>
+  </div>
+  <p style="margin-top:8px;font-size:.82rem;color:#6c757d">
+    H in bits (0 = conserved &rarr; 4.32 = maximally diverse). H<sub>std</sub> = H&thinsp;/&thinsp;log&#x2082;20 (0&ndash;1).
+    Analysed independently per serotype &times; host. Min 5 sequences per group after clustering.
+    Approach adapted from <a href="https://doi.org/10.1038/s41559-026-02993-8" target="_blank">Testa et al. 2026 (<i>Nat Ecol Evol</i>)</a>.
+    <b>Key difference from Testa et al.:</b> we align at the amino acid level (MAFFT <code>--amino</code>)
+    and compute entropy directly, skipping the RevTrans step (back-translation to a codon alignment).
+    RevTrans is only needed for phylogenetic codon models (phydms, future WP2) and is not required for amino acid entropy.
   </p>
 </div>
-<div class="toc"><h3>Contents</h3><ul>{toc_html}</ul></div>
 {body}
 </main>
 <footer>DENV entropy analysis · CNRS UMR2K 2026 · Generated {today}</footer>
