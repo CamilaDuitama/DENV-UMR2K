@@ -312,18 +312,24 @@ def fig_target_zoom():
     fig = go.Figure()
     serotypes = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
                  if s in agg["serotype"].values]
+    # y-offsets so dots for different serotypes don't overlap
+    y_offsets = {s: off for s, off in
+                 zip(serotypes, [-0.28, -0.09, 0.09, 0.28][:len(serotypes)])}
     for sero in serotypes:
         sub = agg[agg["serotype"]==sero].sort_values("gene")
+        y_vals = [target_order.index(g) + y_offsets[sero]
+                  for g in sub["gene"].astype(str)]
         fig.add_trace(go.Scatter(
             x=sub["mean_H"].tolist(),
-            y=sub["gene"].astype(str).tolist(),
+            y=y_vals,
             mode="markers",
-            marker=dict(size=13, color=SERO_COLORS[sero]),
+            marker=dict(size=11, color=SERO_COLORS[sero]),
             error_x=dict(type="data", array=sub["sd_H"].fillna(0).tolist(), visible=True,
-                         color=SERO_COLORS[sero], thickness=1.5, width=5),
+                         color=SERO_COLORS[sero], thickness=1.5, width=4),
             name=sero,
-            hovertemplate=(f"<b>%{{y}}</b><br>{sero}<br>"
+            hovertemplate=(f"<b>%{{customdata[0]}}</b><br>{sero}<br>"
                            "Mean H = %{x:.3f} bits<extra></extra>"),
+            customdata=[[g] for g in sub["gene"].astype(str)],
         ))
 
     fig.add_vline(x=overall_gw, line_dash="dot", line_color="grey", line_width=1.5,
@@ -332,8 +338,13 @@ def fig_target_zoom():
     fig.add_vline(x=0, line_color="white", line_width=0)  # force axis from 0
     fig.update_xaxes(title_text="Mean entropy H (bits)", range=[0, LOG2_20 * 0.45],
                      tickvals=[0, 0.5, 1.0, 1.5], ticktext=["0<br><i>conserved</i>","0.5","1.0","1.5"])
-    fig.update_yaxes(title_text="", tickfont=dict(size=13))
-    fig.update_layout(height=280, legend_title="Serotype",
+    fig.update_yaxes(
+        tickvals=list(range(len(target_order))),
+        ticktext=target_order,
+        tickfont=dict(size=13),
+        range=[-0.5, len(target_order) - 0.5],
+    )
+    fig.update_layout(height=300, legend_title="Serotype",
                       margin=dict(t=30, b=50, l=80, r=20))
     return fig
 
@@ -373,9 +384,8 @@ def fig_hm_scatter():
     valid = gene_means.dropna(subset=["Human","Mosquito"])
     slope, intercept = np.polyfit(valid["Human"], valid["Mosquito"], 1)
     r_val = float(np.corrcoef(valid["Human"], valid["Mosquito"])[0, 1])
-    x_fit = np.linspace(0, vmax, 60)
     fig.add_trace(go.Scatter(
-        x=x_fit, y=slope * x_fit + intercept,
+        x=[0, vmax], y=[intercept, slope * vmax + intercept],
         mode="lines", line=dict(color="#555", width=1.5, dash="dash"),
         name=f"Regression (r\u202f=\u202f{r_val:.2f})",
         showlegend=True, hoverinfo="skip",
@@ -427,9 +437,11 @@ body += card("figure1","Figure",1,"Mean per-gene Shannon entropy by serotype and
     "Dashed line = genome-wide mean for mosquito sequences (per serotype). "
     "Yellow bands = NS4A–2K–NS4B target region.",
     fig_html(F1,"f1"),
-    finding=("Most variable genes: <b>prM</b> (1.14 bits), <b>E</b> (1.10) — surface proteins under antibody selection pressure. "
-             "Most conserved: <b>2K</b> (0.85), <b>NS4A</b> (1.02). "
-             "Target region (NS4A–2K–NS4B) mean = 1.01 bits, slightly <em>below</em> genome-wide mean (1.06 bits) — the target region is at or below average variability."))
+    finding=("Most variable genes (human): <b>prM</b> (1.14 bits), <b>E</b> (1.10), <b>NS2A</b> (1.10), <b>NS4B</b> (1.08) — "
+             "genes under direct antibody or immune selection. "
+             "Most conserved: <b>2K</b> (0.93), <b>NS2B</b> (1.02), <b>NS4A</b> (1.02). "
+             "Note: all genes cluster within a narrow range (0.93–1.14 bits); differences are real but modest. "
+             "Target region (NS4A–2K–NS4B) mean = 1.01 bits, slightly <em>below</em> the genome-wide mean (1.06 bits)."))
 
 body += card("figure2","Figure",2,"Entropy heatmap across the full proteome",
     "Mean H per 20-site sliding window across the DENV polyprotein (all serotype × host combinations). "
@@ -452,15 +464,19 @@ if F3:
                  "Only human sequences shown (mosquito N < 10 after clustering)."))
 
 if F4:
-    body += card("figure4","Figure",4,"Human vs mosquito entropy per site",
-        "Each point is the gene-level mean entropy (H) for one serotype × gene combination. "
-        "Gene-level means pool hundreds of sites, making the comparison robust even at small mosquito N. "
-        "Dotted diagonal = perfect agreement between hosts. Dashed line = regression.",
+    body += card("figure4","Figure",4,"Human vs mosquito entropy — rank correlation",
+        "Each point is the gene-level mean entropy (H) for one serotype \u00d7 gene combination (DENV1/2/4 only; DENV3 mosquito excluded). "
+        "Gene-level means pool hundreds of amino acid sites per gene. "
+        "Dotted diagonal = perfect agreement. Dashed line = linear regression. "
+        "\u26a0\ufe0f Mosquito N\u202f=\u202f5\u20139 sequences per serotype group after clustering.",
         fig_html(F4,"f4"),
-        finding=("<b>Gene-level rank order of conservation is shared between hosts</b> (Pearson r\u202f=\u202f0.77): "
-                 "genes variable in humans tend to be variable in mosquitoes and vice versa. "
-                 "Mosquito entropy values are systematically lower, partly due to small sample sizes "
-                 "(N\u202f=\u202f5\u20139 per group after clustering) and partly reflecting real host dynamics."))
+        finding=("<b>The rank order of conservation is consistent between hosts</b> (Pearson r\u202f=\u202f0.77): "
+                 "genes variable in humans tend to be variable in mosquitoes. "
+                 "However, mosquito entropy values are systematically lower than human values across all genes. "
+                 "<b>This offset cannot be attributed to biology with the current data:</b> "
+                 "Shannon entropy is biased downward at small N (mosquito N\u202f=\u202f5\u20139 vs human N\u202f=\u202f176\u2013620), "
+                 "which alone could explain the gap. Larger mosquito datasets would be needed to separate sampling bias from real host differences. "
+                 "This figure should be treated as exploratory."))
 
 body += card("table1","Table",1,"Full entropy statistics by serotype, gene, and host",
     "Mean H (bits), max H, and number of informative sites per gene across all serotype &times; host combinations. "
@@ -472,7 +488,7 @@ toc = [("methods","Methods — pipeline"),
        ("figure1","Figure 1 — Mean entropy per gene"),
        ("figure2","Figure 2 — Full proteome entropy"),
        ("figure3","Figure 3 — NS4A-2K-NS4B zoom"),
-       ("figure4","Figure 4 — Human vs mosquito scatter"),
+       ("figure4","Figure 4 — Human vs mosquito rank correlation"),
        ("table1","Table 1 — Full statistics")]
 toc_html = "\n".join(f'<li><a href="#{a}">{l}</a></li>' for a,l in toc)
 
