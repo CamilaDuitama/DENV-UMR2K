@@ -350,51 +350,6 @@ def fig_target_zoom():
 
 
 # ── Figure 4: human vs mosquito entropy scatter ───────────────────────────────
-def fig_hm_scatter():
-    """
-    Mean entropy per gene: human vs mosquito. One point per serotype per gene.
-    Stars = target genes (NS4A, 2K, NS4B). Gene labels shown next to points.
-    """
-    gene_means = (df.groupby(["serotype","gene","host"])["entropy"]
-                  .mean().unstack("host").reset_index())
-    if "Human" not in gene_means.columns or "Mosquito" not in gene_means.columns:
-        return None
-    gene_means = gene_means.dropna(subset=["Human","Mosquito"])
-    gene_means["Gene type"] = gene_means["gene"].isin(TARGET_GENES).map(
-        {True: "Target (NS4A–2K–NS4B)", False: "Other gene"})
-    fig = px.scatter(gene_means,
-                     x="Human", y="Mosquito",
-                     color="serotype", symbol="Gene type",
-                     text="gene",
-                     color_discrete_map=SERO_COLORS,
-                     symbol_map={"Target (NS4A–2K–NS4B)": "star",
-                                 "Other gene": "circle"},
-                     labels={"Human":"Mean entropy — humans (bits)",
-                             "Mosquito":"Mean entropy — mosquitoes (bits)",
-                             "serotype":"Serotype",
-                             "Gene type":"Gene type"},
-                     hover_data={"gene":True,"Human":":.3f","Mosquito":":.3f",
-                                 "serotype":True})
-    fig.update_traces(textposition="top center", textfont_size=9, marker_size=10)
-    vmax = max(gene_means["Human"].max(), gene_means["Mosquito"].max()) * 1.05
-    # Diagonal (x=y line)
-    fig.add_shape(type="line", x0=0, y0=0, x1=vmax, y1=vmax,
-                  line=dict(dash="dot", color="lightgrey", width=1))
-    # Regression line
-    valid = gene_means.dropna(subset=["Human","Mosquito"])
-    slope, intercept = np.polyfit(valid["Human"], valid["Mosquito"], 1)
-    r_val = float(np.corrcoef(valid["Human"], valid["Mosquito"])[0, 1])
-    fig.add_trace(go.Scatter(
-        x=[0, vmax], y=[intercept, slope * vmax + intercept],
-        mode="lines", line=dict(color="#555", width=1.5, dash="dash"),
-        name=f"Regression (r\u202f=\u202f{r_val:.2f})",
-        showlegend=True, hoverinfo="skip",
-    ))
-    fig.update_layout(height=520, legend_title="Serotype / Gene type",
-                      margin=dict(t=20,b=40))
-    return fig
-
-
 # ── Summary table ─────────────────────────────────────────────────────────────
 def summary_table():
     has_std = "entropy_std" in df.columns
@@ -427,7 +382,6 @@ def summary_table():
 F1 = fig_summary()
 F2 = fig_per_site_full()
 F3 = fig_target_zoom()
-F4 = fig_hm_scatter()
 
 body = ""
 
@@ -463,20 +417,6 @@ if F3:
                  "making it the best reference for DMS experimental design. "
                  "Only human sequences shown (mosquito N < 10 after clustering)."))
 
-if F4:
-    body += card("figure4","Figure",4,"Human vs mosquito entropy — rank correlation",
-        "Each point is the gene-level mean entropy (H) for one serotype \u00d7 gene combination (DENV1/2/4 only; DENV3 mosquito excluded). "
-        "Gene-level means pool hundreds of amino acid sites per gene. "
-        "Dotted diagonal = perfect agreement. Dashed line = linear regression. "
-        "\u26a0\ufe0f Mosquito N\u202f=\u202f5\u20139 sequences per serotype group after clustering.",
-        fig_html(F4,"f4"),
-        finding=("<b>The rank order of conservation is consistent between hosts</b> (Pearson r\u202f=\u202f0.77): "
-                 "genes variable in humans tend to be variable in mosquitoes. "
-                 "However, mosquito entropy values are systematically lower than human values across all genes. "
-                 "<b>This offset cannot be attributed to biology with the current data:</b> "
-                 "Shannon entropy is biased downward at small N (mosquito N\u202f=\u202f5\u20139 vs human N\u202f=\u202f176\u2013620), "
-                 "which alone could explain the gap. Larger mosquito datasets would be needed to separate sampling bias from real host differences. "
-                 "This figure should be treated as exploratory."))
 
 body += card("table1","Table",1,"Full entropy statistics by serotype, gene, and host",
     "Mean H (bits), max H, and number of informative sites per gene across all serotype &times; host combinations. "
@@ -488,7 +428,6 @@ toc = [("methods","Methods — pipeline"),
        ("figure1","Figure 1 — Mean entropy per gene"),
        ("figure2","Figure 2 — Full proteome entropy"),
        ("figure3","Figure 3 — NS4A-2K-NS4B zoom"),
-       ("figure4","Figure 4 — Human vs mosquito rank correlation"),
        ("table1","Table 1 — Full statistics")]
 toc_html = "\n".join(f'<li><a href="#{a}">{l}</a></li>' for a,l in toc)
 
