@@ -367,13 +367,32 @@ def summary_table():
            "<th>Mean H (bits)</th><th>Max H (bits)</th>"
            + std_th + "</tr></thead><tbody>")
     for _, r in agg.iterrows():
-        hl = ' style="background:#fffde7"' if r["gene"] in TARGET_GENES else ""
+        n = r["n_seqs"]
+        if n < 5:
+            # Unreliable: too few sequences per site — strikethrough, dark grey
+            style = "background:#f5f5f5;color:#aaa;text-decoration:line-through"
+            flag = " &#x26A0;"
+        elif n < 10:
+            # Caution: low N, entropy likely underestimated
+            style = "background:#fff3cd"
+            flag = " &#x26A0;"
+        elif r["gene"] in TARGET_GENES:
+            style = "background:#fffde7"
+            flag = ""
+        else:
+            style = ""
+            flag = ""
         std_td = f"<td>{r['mean_H_std']:.4f}</td>" if has_std else ""
-        tbl += (f"<tr{hl}><td>{r['serotype']}</td><td><b>{r['gene']}</b></td>"
-                f"<td>{r['host']}</td><td>{int(r['n_sites'])}</td>"
-                f"<td>{r['n_seqs']:.0f}</td>"
-                f"<td>{r['mean_H']:.4f}</td><td>{r['max_H']:.4f}</td>{std_td}</tr>")
-    tbl += "</tbody></table>"
+        tbl += (f'<tr style="{style}"><td>{r["serotype"]}</td><td><b>{r["gene"]}</b></td>'
+                f'<td>{r["host"]}</td><td>{int(r["n_sites"])}</td>'
+                f'<td>{r["n_seqs"]:.0f}{flag}</td>'
+                f'<td>{r["mean_H"]:.4f}</td><td>{r["max_H"]:.4f}</td>{std_td}</tr>')
+    tbl += ("</tbody></table>"
+            '<p style="margin-top:8px;font-size:.8rem;color:#555">'
+            "&#x26A0; = median informative sequences per site &lt;&thinsp;10 "
+            "(entropy estimates unreliable; use with caution). "
+            "Strikethrough = median &lt;&thinsp;5 (essentially meaningless). "
+            "Yellow = NS4A&ndash;2K&ndash;NS4B target region.</p>")
     return tbl
 
 
@@ -419,9 +438,12 @@ if F3:
 
 
 body += card("table1","Table",1,"Full entropy statistics by serotype, gene, and host",
-    "Mean H (bits), max H, and number of informative sites per gene across all serotype &times; host combinations. "
-    "Highlighted rows (yellow) = NS4A&ndash;2K&ndash;NS4B target region. "
-    "H<sub>norm</sub> = H / log₂(20) (range 0–1).",
+    "Mean H (bits), max H, and H<sub>norm</sub> = H\u202f/\u202flog\u2082(20) (range 0\u20131) per gene \u00d7 host \u00d7 serotype. "
+    "Rows are colour-coded by data reliability: "
+    "white = reliable (median seqs/site \u226510); "
+    "amber = caution (5\u20139 seqs/site, entropy likely underestimated); "
+    "grey strikethrough = unreliable (&lt;5 seqs/site). "
+    "Yellow = NS4A\u20132K\u2013NS4B target region.",
     summary_table(), collapsible=True)
 
 toc = [("methods","Methods — pipeline"),
