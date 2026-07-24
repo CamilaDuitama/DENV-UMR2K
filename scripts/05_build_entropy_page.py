@@ -223,6 +223,7 @@ def fig_summary():
                           annotation_text=f"human {gw_h[sero]:.2f}",
                           annotation_font_color="#222",
                           annotation_bordercolor="#222",
+                          annotation_yshift=6,
                           **_ANN)
         if sero in gw_m.index:
             fig.add_hline(y=gw_m[sero], row=1, col=col_i,
@@ -230,6 +231,7 @@ def fig_summary():
                           annotation_text=f"mosq {gw_m[sero]:.2f}",
                           annotation_font_color="#8B0000",
                           annotation_bordercolor="#8B0000",
+                          annotation_yshift=-10,
                           **_ANN)
 
     fig.update_layout(height=420, legend_title="Host", margin=dict(t=50,b=60))
