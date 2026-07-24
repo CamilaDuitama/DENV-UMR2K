@@ -206,22 +206,31 @@ def fig_summary():
                           fillcolor="yellow", opacity=0.15, line_width=0)
 
     # Gene-unweighted mean reference lines per serotype × host
+    # Use dark colors distinct from the blue/orange bars
     sero_present = [s for s in SERO_ORDER if s in df["serotype"].unique()]
     gw_h = (df[df["host"]=="Human"].groupby(["serotype","gene"])[ECOL]
             .mean().groupby("serotype").mean())
     gw_m = (df[df["host"]=="Mosquito"].groupby(["serotype","gene"])[ECOL]
             .mean().groupby("serotype").mean())
+    _ANN = dict(annotation_font_size=8,
+                annotation_bgcolor="rgba(255,255,255,0.88)",
+                annotation_borderwidth=1, annotation_borderpad=2,
+                annotation_position="right")
     for col_i, sero in enumerate(sero_present, 1):
         if sero in gw_h.index:
             fig.add_hline(y=gw_h[sero], row=1, col=col_i,
-                          line_dash="dot", line_color=HOST_COLORS["Human"], line_width=1.5,
-                          annotation_text=f"human mean {gw_h[sero]:.2f}",
-                          annotation_font_size=7, annotation_position="right")
+                          line_dash="dot", line_color="#222", line_width=1.5,
+                          annotation_text=f"human {gw_h[sero]:.2f}",
+                          annotation_font_color="#222",
+                          annotation_bordercolor="#222",
+                          **_ANN)
         if sero in gw_m.index:
             fig.add_hline(y=gw_m[sero], row=1, col=col_i,
-                          line_dash="dash", line_color=HOST_COLORS["Mosquito"], line_width=1.2,
-                          annotation_text=f"mosq. mean {gw_m[sero]:.2f}",
-                          annotation_font_size=7, annotation_position="right")
+                          line_dash="dash", line_color="#8B0000", line_width=1.2,
+                          annotation_text=f"mosq {gw_m[sero]:.2f}",
+                          annotation_font_color="#8B0000",
+                          annotation_bordercolor="#8B0000",
+                          **_ANN)
 
     fig.update_layout(height=420, legend_title="Host", margin=dict(t=50,b=60))
     fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
