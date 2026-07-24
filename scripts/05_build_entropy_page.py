@@ -146,6 +146,10 @@ if not ENTROPY_TSV.exists():
 
 df = pd.read_csv(ENTROPY_TSV, sep="\t")
 df["entropy"] = pd.to_numeric(df["entropy"], errors="coerce")
+if "entropy_mm" in df.columns:
+    df["entropy_mm"] = pd.to_numeric(df["entropy_mm"], errors="coerce")
+ECOL = "entropy_mm" if "entropy_mm" in df.columns else "entropy"
+ECOL_LABEL = "H\u2098\u2098 (MM-corrected, bits)" if ECOL == "entropy_mm" else "H (bits)"
 
 today = date.today().strftime("%d %b %Y")
 
@@ -262,9 +266,9 @@ def fig_per_site_full():
         z=pivot.values,
         x=pivot.columns.tolist(),
         y=pivot.index.tolist(),
-        colorscale="RdBu_r",
-        zmid=pivot.values[~np.isnan(pivot.values)].mean() if pivot.size else 1.0,
-        colorbar=dict(title="Mean entropy<br>(bits)"),
+        colorscale="YlOrRd",
+        zmin=0, zmax=2.5,
+        colorbar=dict(title=f"Mean {ECOL_LABEL}"),
         hoverongaps=False,
     ))
 
@@ -404,6 +408,29 @@ def summary_table():
 
 
 
+# ── Pre-compute findings — all numbers derived from df so they never drift ────
+_gm_h       = df[df["host"]=="Human"].groupby("gene")[ECOL].mean().reindex(GENE_ORDER)
+_gm_genome  = _gm_h.mean()
+_top4       = _gm_h.nlargest(4)
+_bot3       = _gm_h.nsmallest(3)
+_tgt_mean_h = _gm_h[list(TARGET_GENES)].mean()
+
+_tgt_sero = (df[(df["gene"].isin(TARGET_GENES)) & (df["host"]=="Human")]
+             .groupby(["serotype","gene"])[ECOL].mean().unstack())
+_2k_sero           = _tgt_sero["2K"] if "2K" in _tgt_sero.columns else None
+_2k_most_cons_sero = _2k_sero.idxmin()    if _2k_sero is not None else "N/A"
+_2k_most_cons_val  = float(_2k_sero.min()) if _2k_sero is not None else 0.0
+_denv134_2k_str    = ", ".join(
+    f"{s}={_tgt_sero.loc[s,'2K']:.3f}"
+    for s in ["DENV1","DENV3","DENV4"]
+    if s in _tgt_sero.index
+)
+
+def _gf(gene):
+    """Gene name + value formatted for findings text."""
+    return f"<b>{gene}</b> ({_gm_h[gene]:.2f})"
+
+
 # ── Build page ────────────────────────────────────────────────────────────────
 F1 = fig_summary()
 F2 = fig_per_site_full()
@@ -413,15 +440,18 @@ body = ""
 
 body += card("figure1","Figure",1,"Mean per-gene Shannon entropy by serotype and host",
     "Mean Shannon entropy H (bits) per gene, split by serotype and host. "
-    "Dotted line = gene-unweighted mean entropy for human sequences (mean of the 11 gene means, per serotype). "
-    "Dashed line = genome-wide mean for mosquito sequences (per serotype). "
+    "Dotted line = gene-unweighted mean "
+    f"{ECOL_LABEL} for human sequences (per serotype). "
+    "Dashed line = gene-unweighted mean "
+    f"{ECOL_LABEL} for mosquito sequences (per serotype). "
     "Yellow bands = NS4A–2K–NS4B target region.",
     fig_html(F1,"f1"),
-    finding=("Most variable genes (human): <b>prM</b> (1.14 bits), <b>E</b> (1.10), <b>NS2A</b> (1.10), <b>NS4B</b> (1.06) — "
-             "genes under direct antibody or immune selection. "
-             "Most conserved: <b>2K</b> (0.985), <b>NS2B</b> (1.01), <b>NS4A</b> (1.01). "
-             "Note: all genes cluster within a narrow range (0.985–1.14 bits); differences are real but modest. "
-             "Target region (NS4A–2K–NS4B) mean = 1.03 bits, close to the genome-wide mean (1.05 bits)."))
+    finding=(f"Most variable genes (human): {_gf(_top4.index[0])}, {_gf(_top4.index[1])}, "
+             f"{_gf(_top4.index[2])}, {_gf(_top4.index[3])} \u2014 "
+             "genes under antibody or immune selection pressure. "
+             f"Most conserved: {_gf(_bot3.index[0])}, {_gf(_bot3.index[1])}, {_gf(_bot3.index[2])}. "
+             f"All genes span {_gm_h.min():.2f}\u2013{_gm_h.max():.2f} bits ({ECOL_LABEL}). "
+             f"Target region mean = {_tgt_mean_h:.2f} bits vs genome mean {_gm_genome:.2f} bits."))
 
 body += card("figure2","Figure",2,"Entropy heatmap across the full proteome",
     "Mean H per 20-site sliding window across the DENV polyprotein (all serotype × host combinations). "
@@ -436,13 +466,15 @@ if F3:
         "Serotype groups with fewer than 10 informative sequences are excluded. "
         "Dashed reference lines = genome-wide mean H per serotype.",
         fig_html(F3,"f3"),
-        finding=("Conservation within the target region <b>varies by serotype</b>. "
-                 "In DENV1/3/4, <b>2K</b> is the most conserved gene: DENV1=1.065, DENV3=1.009, DENV4=0.830 bits. "
-                 "In DENV2 only, NS4A (0.797) and NS4B (0.813) are more conserved than 2K (1.038 bits). "
-                 "This reversal was verified directly from the alignment (620 sequences, ~565 informative per site). "
-                 "<b>DENV2 is the most conserved serotype</b> overall: all three target genes have lower entropy in DENV2 than in DENV1/3/4. "
-                 "Values use corrected per-serotype gene coordinates (previous results for DENV1 were off by 7 AA, DENV3 by 2 AA). "
-                 "Only human sequences shown (mosquito N < 10 after clustering)."))
+        finding=(f"Conservation within the target region <b>varies by serotype</b>. "
+                 f"In DENV1/3/4, <b>2K</b> is most conserved "
+                 f"({_denv134_2k_str} bits). "
+                 "In <b>DENV2</b> only, NS4A and NS4B are more conserved than 2K "
+                 f"({_tgt_sero.loc['DENV2','NS4A']:.3f} and {_tgt_sero.loc['DENV2','NS4B']:.3f} vs "
+                 f"{_tgt_sero.loc['DENV2','2K']:.3f} bits). "
+                 f"<b>DENV2 is the most conserved serotype for NS4A and NS4B.</b> "
+                 f"For 2K, the most conserved serotype is {_2k_most_cons_sero} ({_2k_most_cons_val:.3f} bits). "
+                 f"Values: {ECOL_LABEL}. Human sequences only (mosquito N\u202f<\u202f10 after clustering)."))
 
 
 body += card("table1","Table",1,"Full entropy statistics by serotype, gene, and host",
