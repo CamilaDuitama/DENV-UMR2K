@@ -146,10 +146,14 @@ if not ENTROPY_TSV.exists():
 
 df = pd.read_csv(ENTROPY_TSV, sep="\t")
 df["entropy"] = pd.to_numeric(df["entropy"], errors="coerce")
-if "entropy_mm" in df.columns:
-    df["entropy_mm"] = pd.to_numeric(df["entropy_mm"], errors="coerce")
-ECOL = "entropy_mm" if "entropy_mm" in df.columns else "entropy"
-ECOL_LABEL = "H\u2098\u2098 (MM-corrected, bits)" if ECOL == "entropy_mm" else "H (bits)"
+if "entropy_mm" not in df.columns:
+    raise SystemExit(
+        "ERROR: entropy_mm column missing from TSV. "
+        "Re-run 04_entropy.py (the current version always produces it)."
+    )
+df["entropy_mm"] = pd.to_numeric(df["entropy_mm"], errors="coerce")
+ECOL       = "entropy_mm"                            # Miller\u2013Madow corrected entropy
+ECOL_LABEL = "H\u2098\u2098 (MM-corrected, bits)"   # used in all axis labels
 
 today = date.today().strftime("%d %b %Y")
 
@@ -245,9 +249,8 @@ def fig_per_site_full():
         lambda r: gene_offsets.get(r["gene"], 0) + r["site"], axis=1)
     df2["window"] = (df2["genome_site"] // WINDOW) * WINDOW
 
-    # Use MM-corrected entropy if available
-    ecol = "entropy_mm" if "entropy_mm" in df2.columns else "entropy"
-    agg = (df2.groupby(["serotype","host","window"])[ecol]
+    # Use Miller–Madow corrected entropy (global ECOL, always entropy_mm)
+    agg = (df2.groupby(["serotype","host","window"])[ECOL]
              .mean().reset_index(name="mean_H"))
     agg["row"] = agg["serotype"] + " / " + agg["host"]
 
@@ -308,16 +311,16 @@ def fig_target_zoom():
     if target.empty:
         return None
 
-    ecol = "entropy_mm" if "entropy_mm" in target.columns else "entropy"
+    # Use Miller–Madow corrected entropy (global ECOL, always entropy_mm)
     agg = (target.groupby(["serotype","gene"])
-           .agg(mean_H=(ecol,"mean"), sd_H=(ecol,"std"), n=("n_informative","median"))
+           .agg(mean_H=(ECOL,"mean"), sd_H=(ECOL,"std"), n=("n_informative","median"))
            .reset_index())
     agg = agg[agg["n"] >= 10]
     if agg.empty:
         return None
     agg["gene"] = pd.Categorical(agg["gene"], categories=target_order, ordered=True)
 
-    overall_gw = df[df["host"]=="Human"][ecol].mean()
+    overall_gw = df[df["host"]=="Human"][ECOL].mean()
 
     fig = go.Figure()
     serotypes = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
@@ -556,6 +559,8 @@ tr:hover{{background:#f0f4fa}}
   </div>
   <p style="margin-top:8px;font-size:.82rem;color:#6c757d">
     H in bits (0 = conserved &rarr; 4.32 = maximally diverse). H<sub>std</sub> = H&thinsp;/&thinsp;log&#x2082;20 (0&ndash;1).
+    <b>All figures use Miller&ndash;Madow bias-corrected entropy (H<sub>MM</sub> = H + (K&minus;1)/2N)</b>,
+    which reduces underestimation bias from small sample sizes.
     Analysed independently per serotype &times; host. Min 5 sequences per group after clustering.
     Approach adapted from <a href="https://doi.org/10.1038/s41559-026-02993-8" target="_blank">Testa et al. 2026 (<i>Nat Ecol Evol</i>)</a>.
     <b>Key difference from Testa et al.:</b> we align at the amino acid level (MAFFT <code>--amino</code>)
