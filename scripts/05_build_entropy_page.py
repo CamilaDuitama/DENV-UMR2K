@@ -206,7 +206,7 @@ def fig_summary():
                 line_dash="dot", line_color=HOST_COLORS["Human"], line_width=1.5,
                 annotation_text=f"human mean {gw_h[sero]:.2f}",
                 annotation_font_size=7,
-                annotation_position="top right",
+                annotation_position="right",
             )
         if sero in gw_m.index:
             fig.add_hline(
@@ -214,7 +214,7 @@ def fig_summary():
                 line_dash="dash", line_color=HOST_COLORS["Mosquito"], line_width=1.2,
                 annotation_text=f"mosq. mean {gw_m[sero]:.2f}",
                 annotation_font_size=7,
-                annotation_position="bottom right",
+                annotation_position="right",
             )
     fig.update_layout(height=420, legend_title="Host", margin=dict(t=50,b=60))
     fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
