@@ -266,8 +266,8 @@ def fig_per_site_full():
         z=pivot.values,
         x=pivot.columns.tolist(),
         y=pivot.index.tolist(),
-        colorscale="YlOrRd",
-        zmin=0, zmax=2.5,
+        colorscale="RdBu_r",
+        zmid=float(np.nanmean(pivot.values)) if pivot.size else 1.0,
         colorbar=dict(title=f"Mean {ECOL_LABEL}"),
         hoverongaps=False,
     ))
