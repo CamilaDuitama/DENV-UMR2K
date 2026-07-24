@@ -192,8 +192,13 @@ def fig_summary():
     # Add genome-wide mean per serotype as a dashed reference line
     sero_order = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
                   if s in df["serotype"].unique()]
-    gw_h = df[df["host"]=="Human"].groupby("serotype")["entropy"].mean()
-    gw_m = df[df["host"]=="Mosquito"].groupby("serotype")["entropy"].mean()
+    # Gene-unweighted mean: mean of per-gene means (appropriate for this bar chart
+    # where each bar = one gene regardless of length).
+    # Site-weighted mean would be dominated by long, conserved genes (e.g. NS3 in DENV2).
+    gw_h = (df[df["host"]=="Human"].groupby(["serotype","gene"])["entropy"]
+            .mean().groupby("serotype").mean())
+    gw_m = (df[df["host"]=="Mosquito"].groupby(["serotype","gene"])["entropy"]
+            .mean().groupby("serotype").mean())
     for col_i, sero in enumerate(sero_order, 1):
         if sero in gw_h.index:
             fig.add_hline(
@@ -406,7 +411,7 @@ body = ""
 
 body += card("figure1","Figure",1,"Mean per-gene Shannon entropy by serotype and host",
     "Mean Shannon entropy H (bits) per gene, split by serotype and host. "
-    "Dotted line = genome-wide mean for human sequences (per serotype). "
+    "Dotted line = gene-unweighted mean entropy for human sequences (mean of the 11 gene means, per serotype). "
     "Dashed line = genome-wide mean for mosquito sequences (per serotype). "
     "Yellow bands = NS4A–2K–NS4B target region.",
     fig_html(F1,"f1"),
@@ -432,8 +437,13 @@ if F3:
         finding=("Conservation within the target region <b>varies by serotype</b>: "
                  "in DENV1/3/4, <b>2K</b> (signal peptide) is the most conserved gene (lowest H). "
                  "In DENV2, NS4A and NS4B are more conserved than 2K (0.80 and 0.81 vs 1.04 bits). "
-                 "<b>DENV2 is the most conserved serotype</b> across all three target genes — "
-                 "making it the best reference for DMS experimental design. "
+                 "<b>DENV2 is the most conserved serotype</b> across NS4A and NS4B, "
+                 "but its 2K segment is an exception: 2K has <em>higher</em> entropy (1.04 bits) "
+                 "than NS4A (0.80) and NS4B (0.81) in DENV2 only. "
+                 "This is verified from the raw alignment (620 sequences, ~565 informative per site) "
+                 "and reflects genuine variability at 18 of 21 sites. "
+                 "Three sites in DENV2 2K are highly conserved (G/L/Q at >97%), "
+                 "but the remaining 18 carry 2–4 amino acids each at substantial frequency. "
                  "Only human sequences shown (mosquito N < 10 after clustering)."))
 
 
