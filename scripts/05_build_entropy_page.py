@@ -173,18 +173,26 @@ def card(anchor, kind, num, title, caption, content, collapsible=False, finding=
 
 
 # ── Figure 1: mean entropy per gene × serotype × host ─────────────────────────
+SERO_ORDER = ["DENV1","DENV2","DENV3","DENV4"]
+
 def fig_summary():
-    agg = (df.groupby(["serotype","gene","host"])["entropy"]
+    agg = (df.groupby(["serotype","gene","host"])[ECOL]
              .mean().reset_index(name="mean_H"))
     agg["gene"] = pd.Categorical(agg["gene"], categories=GENE_ORDER, ordered=True)
-    agg = agg.sort_values("gene")
+    agg["serotype"] = pd.Categorical(agg["serotype"], categories=SERO_ORDER, ordered=True)
+    agg = agg.sort_values(["serotype","gene"])
 
     fig = px.bar(agg, x="gene", y="mean_H", color="host",
                  facet_col="serotype", barmode="group",
                  color_discrete_map=HOST_COLORS,
-                 labels={"mean_H":"Mean Shannon entropy (bits)",
+                 labels={"mean_H":ECOL_LABEL,
                          "gene":"Gene","host":"Host","serotype":"Serotype"},
-                 category_orders={"gene":GENE_ORDER})
+                 category_orders={"gene":GENE_ORDER,
+                                  "serotype":SERO_ORDER})
+
+    # Independent y-axes per serotype panel so DENV2's compressed range
+    # doesn't make its mean line appear visually displaced
+    fig.update_yaxes(matches=None, showticklabels=True)
 
     # Highlight target region
     for gene in TARGET_GENES:
@@ -193,33 +201,24 @@ def fig_summary():
                           x1=GENE_ORDER.index(gene)+0.5,
                           fillcolor="yellow", opacity=0.15, line_width=0)
 
-    # Add genome-wide mean per serotype as a dashed reference line
-    sero_order = [s for s in ["DENV1","DENV2","DENV3","DENV4"]
-                  if s in df["serotype"].unique()]
-    # Gene-unweighted mean: mean of per-gene means (appropriate for this bar chart
-    # where each bar = one gene regardless of length).
-    # Site-weighted mean would be dominated by long, conserved genes (e.g. NS3 in DENV2).
-    gw_h = (df[df["host"]=="Human"].groupby(["serotype","gene"])["entropy"]
+    # Gene-unweighted mean reference lines per serotype × host
+    sero_present = [s for s in SERO_ORDER if s in df["serotype"].unique()]
+    gw_h = (df[df["host"]=="Human"].groupby(["serotype","gene"])[ECOL]
             .mean().groupby("serotype").mean())
-    gw_m = (df[df["host"]=="Mosquito"].groupby(["serotype","gene"])["entropy"]
+    gw_m = (df[df["host"]=="Mosquito"].groupby(["serotype","gene"])[ECOL]
             .mean().groupby("serotype").mean())
-    for col_i, sero in enumerate(sero_order, 1):
+    for col_i, sero in enumerate(sero_present, 1):
         if sero in gw_h.index:
-            fig.add_hline(
-                y=gw_h[sero], row=1, col=col_i,
-                line_dash="dot", line_color=HOST_COLORS["Human"], line_width=1.5,
-                annotation_text=f"human mean {gw_h[sero]:.2f}",
-                annotation_font_size=7,
-                annotation_position="right",
-            )
+            fig.add_hline(y=gw_h[sero], row=1, col=col_i,
+                          line_dash="dot", line_color=HOST_COLORS["Human"], line_width=1.5,
+                          annotation_text=f"human mean {gw_h[sero]:.2f}",
+                          annotation_font_size=7, annotation_position="right")
         if sero in gw_m.index:
-            fig.add_hline(
-                y=gw_m[sero], row=1, col=col_i,
-                line_dash="dash", line_color=HOST_COLORS["Mosquito"], line_width=1.2,
-                annotation_text=f"mosq. mean {gw_m[sero]:.2f}",
-                annotation_font_size=7,
-                annotation_position="right",
-            )
+            fig.add_hline(y=gw_m[sero], row=1, col=col_i,
+                          line_dash="dash", line_color=HOST_COLORS["Mosquito"], line_width=1.2,
+                          annotation_text=f"mosq. mean {gw_m[sero]:.2f}",
+                          annotation_font_size=7, annotation_position="right")
+
     fig.update_layout(height=420, legend_title="Host", margin=dict(t=50,b=60))
     fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))
     return fig
