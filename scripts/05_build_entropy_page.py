@@ -268,8 +268,8 @@ def fig_per_site_full():
         hoverongaps=False,
     ))
 
-    # Gene labels on x-axis
-    for g in GENE_ORDER:
+    # Gene labels on x-axis — alternate y-position to prevent overlap
+    for i, g in enumerate(GENE_ORDER):
         goff = gene_offsets.get(g, 0)
         sub_g = df[df["gene"]==g]
         if sub_g.empty: continue
@@ -278,14 +278,16 @@ def fig_per_site_full():
         if g in TARGET_GENES:
             fig.add_vrect(x0=goff, x1=goff+int(sub_g["site"].max()),
                           fillcolor="yellow", opacity=0.1, line_width=0)
-        fig.add_annotation(x=mid, y=1.01, yref="paper", text=g,
-                           showarrow=False, font=dict(size=9),
+        # Alternate label height so short genes don't overlap
+        y_pos = 1.03 if i % 2 == 0 else 1.09
+        fig.add_annotation(x=mid, y=y_pos, yref="paper", text=g,
+                           showarrow=False, font=dict(size=10, color="#333"),
                            xanchor="center", yanchor="bottom")
 
-    fig.update_layout(height=300,
-                      xaxis_title=f"Genomic position ({WINDOW}-site windows)",
+    fig.update_layout(height=340,
+                      xaxis_title=f"Amino acid position ({WINDOW}-site windows)",
                       yaxis_title="",
-                      margin=dict(t=40, b=40, l=140, r=20))
+                      margin=dict(t=60, b=40, l=160, r=20))
     return fig
 
 

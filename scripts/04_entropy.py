@@ -53,22 +53,71 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Gene coordinates ──────────────────────────────────────────────────────────
-# NT coordinates in DENV2 reference NC_001474.2 (1-based, inclusive)
-POLYPROTEIN_START_NT = 97   # C protein starts here
+# NT coordinates (1-based, inclusive) from NCBI reference annotations.
+# Each serotype uses its own reference so coordinates must match that reference.
+POLYPROTEIN_START_NT = 97   # C protein starts at NT 97 in all four serotypes
 
-NT_GENE_COORDS = {
-    "C":    (97,   411),
-    "prM":  (412,  936),
-    "E":    (937,  2421),
-    "NS1":  (2422, 3477),
-    "NS2A": (3478, 4131),
-    "NS2B": (4132, 4521),
-    "NS3":  (4522, 6375),
-    "NS4A": (6376, 6825),
-    "2K":   (6826, 6891),
-    "NS4B": (6892, 7650),
-    "NS5":  (7651, 10272),
+NT_GENE_COORDS_BY_SERO: dict[str, dict[str, tuple[int,int]]] = {
+    # DENV1 NC_001477.1
+    "DENV1": {
+        "C":    (97,   411),
+        "prM":  (412,  936),
+        "E":    (937,  2421),
+        "NS1":  (2422, 3477),
+        "NS2A": (3478, 4131),
+        "NS2B": (4132, 4521),
+        "NS3":  (4522, 6396),
+        "NS4A": (6397, 6846),
+        "2K":   (6847, 6912),
+        "NS4B": (6913, 7671),
+        "NS5":  (7672, 10269),
+    },
+    # DENV2 NC_001474.2
+    "DENV2": {
+        "C":    (97,   411),
+        "prM":  (412,  936),
+        "E":    (937,  2421),
+        "NS1":  (2422, 3477),
+        "NS2A": (3478, 4131),
+        "NS2B": (4132, 4521),
+        "NS3":  (4522, 6375),
+        "NS4A": (6376, 6825),
+        "2K":   (6826, 6891),
+        "NS4B": (6892, 7650),
+        "NS5":  (7651, 10272),
+    },
+    # DENV3 NC_001475.2
+    "DENV3": {
+        "C":    (97,   411),
+        "prM":  (412,  936),
+        "E":    (937,  2421),
+        "NS1":  (2422, 3477),
+        "NS2A": (3478, 4131),
+        "NS2B": (4132, 4521),
+        "NS3":  (4522, 6381),
+        "NS4A": (6382, 6831),
+        "2K":   (6832, 6897),
+        "NS4B": (6898, 7656),
+        "NS5":  (7657, 10269),
+    },
+    # DENV4 NC_002640.1
+    "DENV4": {
+        "C":    (97,   411),
+        "prM":  (412,  936),
+        "E":    (937,  2421),
+        "NS1":  (2422, 3477),
+        "NS2A": (3478, 4131),
+        "NS2B": (4132, 4521),
+        "NS3":  (4522, 6375),
+        "NS4A": (6376, 6825),
+        "2K":   (6826, 6891),
+        "NS4B": (6892, 7650),
+        "NS5":  (7651, 10272),
+    },
 }
+
+# Legacy: DENV2 coordinates used as defaults (for backward compatibility in arg parsing)
+NT_GENE_COORDS = NT_GENE_COORDS_BY_SERO["DENV2"]
 
 # Convert to AA positions within the polyprotein (1-based)
 AA_GENE_COORDS = {
@@ -185,13 +234,16 @@ def ref_aa_col_map(aln_fasta: Path, ref_prefix: str = "REF_") -> dict[int, int]:
 
 
 def extract_gene_aa(aln_fasta: Path, pos_map: dict[int, int],
-                    gene: str, host_ids: set[str]) -> list[str] | None:
+                    gene: str, host_ids: set[str],
+                    aa_coords: dict[str, tuple[int,int]] | None = None) -> list[str] | None:
     """
     Extract AA alignment columns for gene from aln, restricted to host_ids.
     transeq appends '_1' to sequence IDs — strip it when matching.
+    aa_coords: per-serotype AA coordinate dict; falls back to global AA_GENE_COORDS.
     Returns list of AA strings, or None if too few sequences.
     """
-    aa_start, aa_end = AA_GENE_COORDS[gene]
+    coords = aa_coords if aa_coords is not None else AA_GENE_COORDS
+    aa_start, aa_end = coords[gene]
     cols = [pos_map[p] for p in range(aa_start, aa_end + 1) if p in pos_map]
     if not cols:
         return None
@@ -347,9 +399,19 @@ def main() -> None:
         # ── Reference AA position → alignment column map ───────────────────
         pos_map = ref_aa_col_map(aa_aln)
 
+        # ── Use serotype-specific gene coordinates ─────────────────────────
+        sero_nt_coords = NT_GENE_COORDS_BY_SERO.get(sero, NT_GENE_COORDS)
+        sero_aa_coords = {
+            gene: (
+                (nt_s - POLYPROTEIN_START_NT) // 3 + 1,
+                (nt_e - POLYPROTEIN_START_NT) // 3,
+            )
+            for gene, (nt_s, nt_e) in sero_nt_coords.items()
+        }
+
         # ── Per-gene, per-host entropy ─────────────────────────────────────
         for gene in args.genes:
-            if gene not in AA_GENE_COORDS:
+            if gene not in sero_aa_coords:
                 continue
             for host in args.hosts:
                 host_ids = host_id_map.get(host, set())
@@ -358,7 +420,8 @@ def main() -> None:
                              sero, gene, host, len(host_ids))
                     continue
 
-                seqs = extract_gene_aa(aa_aln, pos_map, gene, host_ids)
+                seqs = extract_gene_aa(aa_aln, pos_map, gene, host_ids,
+                                      aa_coords=sero_aa_coords)
                 if seqs is None:
                     log.info("%s / %s / %s: too few after extraction",
                              sero, gene, host)
