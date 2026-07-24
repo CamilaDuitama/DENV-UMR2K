@@ -93,17 +93,17 @@ tbl1 += (f'<tr class="total"><td><b>Total</b></td>'
          f"<td><b>{int(tot['Total']):,}</b></td></tr></tbody></table>")
 
 # ── Table 2: exclusions ───────────────────────────────────────────────────────
+n_vax_listed = len(VACCINE_ACCESSIONS)
 tbl2 = f"""<table><thead><tr><th>Category</th><th>Count</th><th>Reason</th></tr></thead><tbody>
 <tr><td>Lab-grown sequences</td><td>{n_lab:,}</td>
-    <td>Flagged <code>is_lab_host = True</code> by Nextstrain. These were sequenced from
-    cell cultures (Vero, C6/36, etc.) and may carry culture-adaptation mutations.</td></tr>
-<tr><td>PDK-passage / chimeric strains</td><td>{n_vax}</td>
-    <td>Vaccine candidates or engineered chimeras identified manually from strain names.
-    Not caught by the lab-host flag. See list below.</td></tr>
+    <td>Propagated in cell culture rather than isolated directly from a host.
+    May carry culture-adaptation mutations and do not represent natural viral diversity.</td></tr>
+<tr><td>PDK-passage &amp; chimeric strains</td><td>{n_vax_listed}</td>
+    <td>Attenuated vaccine candidates or engineered chimeric constructs.
+    Not representative of naturally circulating strains. See list below.</td></tr>
 <tr><td>No host annotation</td><td>{n_no_host:,}</td>
-    <td>Sequences where the submitter did not record the host in GenBank.
-    Common in older submissions and some surveillance datasets.
-    Retained in the downloaded FASTA but not used in any analysis.</td></tr>
+    <td>Host species not recorded. Cannot be assigned to human or mosquito
+    and are therefore not included in any analysis.</td></tr>
 </tbody></table>
 <h4 style="margin:14px 0 6px;font-size:.88rem">PDK-passage and chimeric strains (with accessions)</h4>
 <table><thead><tr><th>Accession</th><th>Strain</th><th>Serotype</th><th>Reason</th></tr></thead><tbody>"""
@@ -299,8 +299,10 @@ body += card("table1","Table",1,"Full genomes retained for analysis",
     tbl1)
 
 body += card("table2","Table",2,"Sequences excluded from the analysis",
-    f"Three categories of sequences are excluded. Together they account for "
-    f"{n_lab+n_vax+n_no_host:,} of the {n_total_dl:,} downloaded sequences.",
+    f"Three categories of sequences were not used in any analysis, "
+    f"totalling {n_lab + n_vax_listed + n_no_host:,} sequences. "
+    f"The remaining {n_total:,} sequences (human and mosquito hosts with confirmed annotation) "
+    f"form the analysis dataset described in Table 1.",
     tbl2)
 
 body += card("figure1","Figure",1,"Sequence counts by serotype and host",
