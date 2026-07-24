@@ -360,44 +360,40 @@ def fig_target_zoom():
     return fig
 
 
-# ── Figure 4: human vs mosquito entropy scatter ───────────────────────────────
 # ── Summary table ─────────────────────────────────────────────────────────────
 def summary_table():
-    has_std = "entropy_std" in df.columns
-    agg_kw = dict(n_sites=("site","count"), n_seqs=("n_informative","median"),
-                  mean_H=("entropy","mean"), max_H=("entropy","max"))
-    if has_std:
-        agg_kw["mean_H_std"] = ("entropy_std","mean")
-    agg = (df.groupby(["serotype","gene","host"]).agg(**agg_kw)
-             .reset_index().round(4))
+    # entropy_std (H/log2(20), 0-1 normalised) is always present in the TSV
+    agg = (df.groupby(["serotype","gene","host"]).agg(
+               n_sites=("site","count"),
+               n_seqs=("n_informative","median"),
+               mean_H=(ECOL,"mean"),
+               max_H=(ECOL,"max"),
+               mean_H_norm=("entropy_std","mean"),
+           ).reset_index().round(4))
     agg["gene"] = pd.Categorical(agg["gene"], categories=GENE_ORDER, ordered=True)
     agg = agg.sort_values(["serotype","gene","host"])
-    std_th = "<th>Mean H<sub>norm</sub></th>" if has_std else ""
     tbl = ("<table><thead><tr><th>Serotype</th><th>Gene</th><th>Host</th>"
            "<th>Sites</th><th>Median seqs/site</th>"
-           "<th>Mean H (bits)</th><th>Max H (bits)</th>"
-           + std_th + "</tr></thead><tbody>")
+           f"<th>Mean {ECOL_LABEL}</th><th>Max {ECOL_LABEL}</th>"
+           "<th>Mean H<sub>norm</sub></th></tr></thead><tbody>")
     for _, r in agg.iterrows():
         n = r["n_seqs"]
         if n < 5:
-            # Unreliable: too few sequences per site — strikethrough, dark grey
             style = "background:#f5f5f5;color:#aaa;text-decoration:line-through"
             flag = " &#x26A0;"
         elif n < 10:
-            # Caution: low N, entropy likely underestimated
             style = "background:#fff3cd"
             flag = " &#x26A0;"
         elif r["gene"] in TARGET_GENES:
             style = "background:#fffde7"
             flag = ""
         else:
-            style = ""
-            flag = ""
-        std_td = f"<td>{r['mean_H_std']:.4f}</td>" if has_std else ""
+            style, flag = "", ""
         tbl += (f'<tr style="{style}"><td>{r["serotype"]}</td><td><b>{r["gene"]}</b></td>'
                 f'<td>{r["host"]}</td><td>{int(r["n_sites"])}</td>'
                 f'<td>{r["n_seqs"]:.0f}{flag}</td>'
-                f'<td>{r["mean_H"]:.4f}</td><td>{r["max_H"]:.4f}</td>{std_td}</tr>')
+                f'<td>{r["mean_H"]:.4f}</td><td>{r["max_H"]:.4f}</td>'
+                f'<td>{r["mean_H_norm"]:.4f}</td></tr>')
     tbl += ("</tbody></table>"
             '<p style="margin-top:8px;font-size:.8rem;color:#555">'
             "&#x26A0; = median informative sequences per site &lt;&thinsp;10 "
@@ -478,10 +474,11 @@ if F3:
 
 
 body += card("table1","Table",1,"Full entropy statistics by serotype, gene, and host",
-    "Mean H (bits), max H, and H<sub>norm</sub> = H\u202f/\u202flog\u2082(20) (range 0\u20131) per gene \u00d7 host \u00d7 serotype. "
-    "Rows are colour-coded by data reliability: "
-    "white = reliable (median seqs/site \u226510); "
-    "amber = caution (5\u20139 seqs/site, entropy likely underestimated); "
+    f"Mean and max {ECOL_LABEL} per gene \u00d7 host \u00d7 serotype. "
+    "H<sub>norm</sub> = H\u202f/\u202flog\u2082(20) (range 0\u20131). "
+    "Rows colour-coded by data reliability: "
+    "white = reliable (\u226510 seqs/site); "
+    "amber = caution (5\u20139 seqs/site); "
     "grey strikethrough = unreliable (&lt;5 seqs/site). "
     "Yellow = NS4A\u20132K\u2013NS4B target region.",
     summary_table(), collapsible=True)
