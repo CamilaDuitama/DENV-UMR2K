@@ -417,6 +417,8 @@ def summary_table():
 
 # ── Pre-compute findings — all numbers derived from df so they never drift ────
 _gm_h       = df[df["host"]=="Human"].groupby("gene")[ECOL].mean().reindex(GENE_ORDER)
+_gm_h_by_sero = (df[df["host"]=="Human"].groupby(["serotype","gene"])[ECOL]
+                 .mean().groupby("serotype").mean())
 _gm_genome  = _gm_h.mean()
 _top4       = _gm_h.nlargest(4)
 _bot3       = _gm_h.nsmallest(3)
@@ -464,7 +466,10 @@ body += card("figure2","Figure",2,"Entropy heatmap across the full proteome",
     "Mean H per 20-site sliding window across the DENV polyprotein (all serotype × host combinations). "
     "Redder = more variable; bluer = more conserved. Yellow bands = target region (NS4A–2K–NS4B).",
     fig_html(F2,"f2"),
-    finding=("<b>DENV2</b> is notably more conserved (0.77\u202fbits) than DENV1/3/4 (1.1\u20131.2\u202fbits) \u2014 visible as the consistently blue row across all panels. "
+    finding=(f"<b>DENV2</b> is notably more conserved "
+             f"({_gm_h_by_sero['DENV2']:.2f}\u202fbits) than "
+             f"{', '.join(f'{s} ({_gm_h_by_sero[s]:.2f})' for s in ['DENV1','DENV3','DENV4'] if s in _gm_h_by_sero)} bits "
+             "\u2014 visible as the consistently blue row across all panels. "
              "The target region shows a relatively conserved band across serotypes."))
 
 if F3:
@@ -500,11 +505,6 @@ toc = [("methods","Methods — pipeline"),
        ("figure3","Figure 3 — NS4A-2K-NS4B zoom"),
        ("table1","Table 1 — Full statistics")]
 toc_html = "\n".join(f'<li><a href="#{a}">{l}</a></li>' for a,l in toc)
-
-# Count for header
-n_sero  = df["serotype"].nunique()
-n_genes = df["gene"].nunique()
-n_sites = len(df[df["host"]=="Human"])  # proxy
 
 html = f"""<!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">

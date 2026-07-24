@@ -351,10 +351,12 @@ def main() -> None:
         run(["transeq", "-sequence", str(ref_poly_nt), "-outseq", str(ref_aa_path),
              "-frame", "1", "-clean", "-osformat2", "fasta"], f"transeq ref {sero}")
 
-        # ── Collect sequences ──────────────────────────────────────────────
+        # ── Collect sequences — apply coverage ≥ 0.95 filter ─────────────
+        MIN_COV = 0.95
         sero_ids = set(
             meta[(meta["serotype"] == sero) &
-                 (meta["host_type"].isin(args.hosts))]["accession"]
+                 (meta["host_type"].isin(args.hosts)) &
+                 (meta["genome_coverage"].fillna(0) >= MIN_COV)]["accession"]
         )
         sero_fasta = sero_dir / "all_nt.fasta"
         n_all = write_fasta(fasta, sero_ids, sero_fasta)
