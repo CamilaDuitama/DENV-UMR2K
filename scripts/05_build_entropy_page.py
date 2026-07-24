@@ -417,11 +417,11 @@ body += card("figure1","Figure",1,"Mean per-gene Shannon entropy by serotype and
     "Dashed line = genome-wide mean for mosquito sequences (per serotype). "
     "Yellow bands = NS4A–2K–NS4B target region.",
     fig_html(F1,"f1"),
-    finding=("Most variable genes (human): <b>prM</b> (1.14 bits), <b>E</b> (1.10), <b>NS2A</b> (1.10), <b>NS4B</b> (1.08) — "
+    finding=("Most variable genes (human): <b>prM</b> (1.14 bits), <b>E</b> (1.10), <b>NS2A</b> (1.10), <b>NS4B</b> (1.06) — "
              "genes under direct antibody or immune selection. "
-             "Most conserved: <b>2K</b> (0.93), <b>NS2B</b> (1.02), <b>NS4A</b> (1.02). "
-             "Note: all genes cluster within a narrow range (0.93–1.14 bits); differences are real but modest. "
-             "Target region (NS4A–2K–NS4B) mean = 1.01 bits, slightly <em>below</em> the genome-wide mean (1.06 bits)."))
+             "Most conserved: <b>2K</b> (0.985), <b>NS2B</b> (1.01), <b>NS4A</b> (1.01). "
+             "Note: all genes cluster within a narrow range (0.985–1.14 bits); differences are real but modest. "
+             "Target region (NS4A–2K–NS4B) mean = 1.03 bits, close to the genome-wide mean (1.05 bits)."))
 
 body += card("figure2","Figure",2,"Entropy heatmap across the full proteome",
     "Mean H per 20-site sliding window across the DENV polyprotein (all serotype × host combinations). "
@@ -436,16 +436,12 @@ if F3:
         "Serotype groups with fewer than 10 informative sequences are excluded. "
         "Dashed reference lines = genome-wide mean H per serotype.",
         fig_html(F3,"f3"),
-        finding=("Conservation within the target region <b>varies by serotype</b>: "
-                 "in DENV1/3/4, <b>2K</b> (signal peptide) is the most conserved gene (lowest H). "
-                 "In DENV2, NS4A and NS4B are more conserved than 2K (0.80 and 0.81 vs 1.04 bits). "
-                 "<b>DENV2 is the most conserved serotype</b> across NS4A and NS4B, "
-                 "but its 2K segment is an exception: 2K has <em>higher</em> entropy (1.04 bits) "
-                 "than NS4A (0.80) and NS4B (0.81) in DENV2 only. "
-                 "This is verified from the raw alignment (620 sequences, ~565 informative per site) "
-                 "and reflects genuine variability at 18 of 21 sites. "
-                 "Three sites in DENV2 2K are highly conserved (G/L/Q at >97%), "
-                 "but the remaining 18 carry 2–4 amino acids each at substantial frequency. "
+        finding=("Conservation within the target region <b>varies by serotype</b>. "
+                 "In DENV1/3/4, <b>2K</b> is the most conserved gene: DENV1=1.065, DENV3=1.009, DENV4=0.830 bits. "
+                 "In DENV2 only, NS4A (0.797) and NS4B (0.813) are more conserved than 2K (1.038 bits). "
+                 "This reversal was verified directly from the alignment (620 sequences, ~565 informative per site). "
+                 "<b>DENV2 is the most conserved serotype</b> overall: all three target genes have lower entropy in DENV2 than in DENV1/3/4. "
+                 "Values use corrected per-serotype gene coordinates (previous results for DENV1 were off by 7 AA, DENV3 by 2 AA). "
                  "Only human sequences shown (mosquito N < 10 after clustering)."))
 
 
